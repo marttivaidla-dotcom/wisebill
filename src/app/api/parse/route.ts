@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { PDFParse } from "pdf-parse";
 import { parseAccounts, parseRegister, parseSpreadsheet } from "@/lib/parsers/spreadsheet";
 import { parseInvoiceText } from "@/lib/parsers/text";
 import type { Invoice, InvoiceDirection } from "@/lib/types";
@@ -48,7 +47,11 @@ export async function POST(req: Request) {
     if (isSheet) {
       invoices = parseSpreadsheet(buf, file.name, direction);
     } else if (ext === "pdf" || file.type === "application/pdf") {
-      const parser = new PDFParse({ data: buf });
+      // Laetakse ainult PDF-i jaoks: kui pdf.js-iga on probleem, töötavad Excel/CSV edasi.
+      // CanvasFactory annab serverless-keskkonnas puuduva DOMMatrix'i (pdf-parse troubleshooting).
+      const { CanvasFactory } = await import("pdf-parse/worker");
+      const { PDFParse } = await import("pdf-parse");
+      const parser = new PDFParse({ data: buf, CanvasFactory });
       try {
         const { text: pdfText } = await parser.getText();
         if (pdfText.replace(/\s/g, "").length < 30)
