@@ -54,7 +54,7 @@ test("e-arve XML: struktuur, escape ja summad klapivad", () => {
     i.seller.name = "Puit & Ehitus OÜ";
     i.buyer = { name: "Wise Tag OÜ", regNumber: "87654321" };
   }
-  assert.deepEqual(invs.map(validate), [[], []]);
+  assert.deepEqual(invs.map((i) => validate(i)), [[], []]);
   const xml = buildEInvoiceXml(invs, new Date("2026-10-01T10:00:00Z"));
   assert.match(xml, /^<\?xml version="1.0" encoding="UTF-8"\?>/);
   assert.match(xml, /<Name>Puit &amp; Ehitus OÜ<\/Name>/);
