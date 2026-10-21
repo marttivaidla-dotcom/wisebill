@@ -1,4 +1,4 @@
-import { store } from "./store";
+import type { BillberrySettings } from "./types";
 
 /** Saadab faili /api/parse-le ja tagastab JSON-i (või viskab serveri veateate). */
 export async function postFile<T>(file: File, fields: Record<string, string>): Promise<T> {
@@ -12,12 +12,12 @@ export async function postFile<T>(file: File, fields: Record<string, string>): P
   return json as T;
 }
 
-/** Kutsub /api/billberry-t (partneri võti on serveris). Viga visatakse eestikeelse selgitusega. */
-export async function callBillberry<T>(body: Record<string, string>): Promise<T> {
+/** Kutsub /api/billberry-t firma võtmega. Viga visatakse eestikeelse selgitusega. */
+export async function callBillberry<T>(settings: BillberrySettings, body: { action: "check" | "upload"; xml?: string }): Promise<T> {
   const res = await fetch("/api/billberry", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-wisebill-password": store.password() },
-    body: JSON.stringify(body),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...body, env: settings.env, keyId: settings.keyId, key: settings.key }),
   });
   const json = await res.json();
   if (!res.ok) {

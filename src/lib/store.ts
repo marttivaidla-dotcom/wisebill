@@ -13,7 +13,6 @@ const K = {
   active: "wisebill.activeCompany",
   register: (id: string) => `wisebill.register.${id}`,
   mappings: (id: string) => `wisebill.mappings.${id}`,
-  password: "wisebill.password",
 };
 
 function read<T>(key: string, fallback: T): T {
@@ -66,10 +65,6 @@ export const store = {
 
   mappings: (companyId: string): Mappings => ({ ...emptyMappings(), ...read(K.mappings(companyId), {}) }),
   saveMappings: (companyId: string, m: Mappings) => write(K.mappings(companyId), m),
-
-  /** WiseBilli serveri parool (WISEBILL_PASSWORD) – Billberry API-tee kaitse. Varukoopiasse ei lähe. */
-  password: (): string => read(K.password, ""),
-  setPassword: (p: string) => write(K.password, p),
 
   /** Kõik andmed ühte JSON-faili (varukoopia / teise arvutisse viimine). */
   exportAll(): Backup {

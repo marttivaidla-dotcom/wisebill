@@ -111,7 +111,7 @@ export default function Home() {
     for (const [n, inv] of ready.entries()) {
       setStatus(`Saadan Billberrysse ${n + 1}/${ready.length}: arve ${inv.number} …`);
       try {
-        await callBillberry({ action: "upload", xml: buildEInvoiceXml([inv]) });
+        await callBillberry(company.billberry!, { action: "upload", xml: buildEInvoiceXml([inv]) });
         sent.push(inv);
       } catch (e) {
         update(inv.id, (i) => ({ ...i, sendError: e instanceof Error ? e.message : String(e) }));
@@ -122,8 +122,7 @@ export default function Home() {
     setStatus(`✓ ${sent.length} arvet saadetud Booksi (Ostuarved → Registrid → Tarnija e-arved)` +
       (failed ? ` · ${failed} ebaõnnestus – põhjus on arve juures punasega` : ""));
   }
-  const billberryReady = direction === "purchase" && !!company?.billberry?.registered &&
-    !!company.billberry.creatingReceivedEnabled && !!company.billberry.receivingOperator;
+  const billberryReady = direction === "purchase" && !!company?.billberry?.keyId && !!company.billberry.key;
 
   if (!companies.length)
     return (
@@ -204,7 +203,7 @@ export default function Home() {
           </span>
           {direction === "purchase" && (
             <button disabled={ready.length === 0 || !billberryReady} onClick={sendToBillberry}
-              title={billberryReady ? "Billberry kaudu Booksi registrisse Tarnija e-arved" : "Billberry pole selle firma jaoks seadistatud – vaata Firmad → samm 3"}>
+              title={billberryReady ? "Billberry kaudu Booksi registrisse Tarnija e-arved" : "Lisa firmale Billberry võti: Firmad → samm 3"}>
               Saada Booksi
             </button>
           )}

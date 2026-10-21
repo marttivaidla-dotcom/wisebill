@@ -25,11 +25,10 @@ Algdokumendid (PDF, Excel, CSV, pildid) → eelvaade/parandus brauseris → **Ex
 - `src/lib/store.ts` – KÕIK püsiandmed (firmad, kontoplaanid, register, vastendused); praegu localStorage.
   Supabase'i üleminek = ainult selle faili vahetus. Varukoopia JSON-ina lehel /firmad.
 - Lehed: `/` (import + eelvaade), `/firmad` (firmad, kontoplaan, Booksi arvete registri laadimine).
-- `src/lib/billberry.ts` + `src/app/api/billberry/route.ts` – Billberry partneri API (ainult server, võtmed
-  env-is, vt `.env.example`). Ostuarve: `POST /partners/{id}/invoices/received` + `X-Forward: immediately`,
-  **üks arve päringu kohta**. Firma registreerimine: `PUT …/organizations/EE:{regkood}` `{creatingReceivedEnabled:true}`.
-  `receivingEnabled` jäetakse meelega puutumata (vahetaks äriregistris firma operaatori). API-tee kaitseb
-  `WISEBILL_PASSWORD` (päis `x-wisebill-password`, brauseris localStorage'is); toodangus ilma selleta keeldub.
+- `src/lib/billberry.ts` + `src/app/api/billberry/route.ts` – ostuarve Billberry kaudu Booksi: **firma enda API võti**
+  (Billberry: Konto ja seaded -> API võtmed; hoitakse firma seadetes, mitte env-is) ja `POST /invoices/received`,
+  üks arve päringu kohta. Billberry kontrollib, et `<Invoice regNumber>` = võtme firma reg.kood (meil ostja = firma).
+  Kinnitanud Billberry arendaja; salvestatud OpenAPI-s seda firma-võtme varianti pole. Server on ainult vahendaja (CORS).
 - `src/lib/ariregister.ts` + `src/app/api/ariregister/route.ts` – äriregistri tasuta avalik otsing
   (`/est/api/autocomplete`, JSON) ja KMKR firma avalikult lehelt (HTML-ist regexiga, kehtib kui periood "– ..").
   /firmad: nime väljal otsing, valides täidetakse reg.kood, KMKR, aadress.
@@ -54,7 +53,6 @@ Algdokumendid (PDF, Excel, CSV, pildid) → eelvaade/parandus brauseris → **Ex
 ## Teadaolevad lüngad
 - `xlsx` paigaldatakse SheetJS CDN-ist (npm-i versioon on vana ja haavatav) – ära vaheta npm-i omaga.
 - XML vastab ametlikule XSD-le, aga pole päris Booksi impordiga testitud.
-- Billberry: testitud ainult võlts-fetchiga, mitte staging-keskkonnas. Kinnitamata: kas kulukontod
-  (`GeneralLedger`) ja `serviceId` jõuavad operaatori kaudu Booksi; kas `creatingReceivedEnabled` on partnerile tasuta.
-  Müügiarved lähevad endiselt ainult XML-failina.
+- Billberry: aadress vastab testkeskkonnas firma võtmega (tühi XML -> 422), päris arvega veel proovimata.
+  Kinnitamata, kas kulukontod (`GeneralLedger`) ja `serviceId` jõuavad Booksi. Müügiarved ainult XML-failina.
 - Pangaväljavõtted (camt.053 / CSV) ja Books REST API (`/api/1/IVVc`) on veel tegemata.

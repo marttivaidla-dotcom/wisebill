@@ -77,15 +77,15 @@ export interface Company {
   accounts: Account[]; // kontoplaan
   defaultExpenseAccount?: string; // vaikimisi kulukonto ostuarve ridadele
   defaultIncomeAccount?: string; // vaikimisi tulukonto müügiarve ridadele
-  billberry?: BillberryStatus; // viimati kontrollitud olek Billberrys
+  billberry?: BillberrySettings; // firma Billberry API võti – ostuarved Billberry kaudu Booksi
 }
 
-/** Firma olek Billberrys (e-arve operaator, mille kaudu ostuarved Booksi saadetakse). */
-export interface BillberryStatus {
-  checkedAt: string;
-  registered: boolean;
-  creatingReceivedEnabled: boolean; // ostuarvete üleslaadimine lubatud
-  receivingOperator: string | null; // firma e-arve operaator, nt "billberry", "telema", "finbite"; null = ei võta vastu
+/** Firma Billberry API võti (Billberry: Konto ja seaded -> API võtmed). */
+export interface BillberrySettings {
+  env: "test" | "production"; // test = dev.billberry.ee, päris = app.billberry.ee
+  keyId: string;
+  key: string;
+  checkedAt?: string; // viimane edukas ühenduse kontroll
 }
 
 /** Juba imporditud (või Booksis olemasolev) arve – duplikaatide kontrolliks. */

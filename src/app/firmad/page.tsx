@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { Account, AccountType, BillberryStatus, Company, InvoiceDirection, RegisterEntry } from "@/lib/types";
-import type { BillberryOrganization } from "@/lib/billberry";
+import type { Account, AccountType, BillberrySettings, Company, InvoiceDirection, RegisterEntry } from "@/lib/types";
 import { STATUS_LABELS, type RegistryCompany, type RegistryDetails } from "@/lib/ariregister";
 import { TEMPLATE_ACCOUNTS, accountsFor } from "@/lib/accounts";
 import { companyIssues } from "@/lib/readiness";
@@ -82,8 +81,6 @@ export default function CompaniesPage() {
 
           <section className="card">
             <h2 className="side-title">Seaded</h2>
-            <PasswordField />
-            <hr />
             <p className="hint">Andmed on ainult selles brauseris. Tee aeg-ajalt varukoopia.</p>
             <div className="actions">
               <button className="secondary" onClick={() =>
@@ -372,29 +369,19 @@ function RegistrySearch({ company, onSave, error }: { company: Company; onSave: 
   );
 }
 
-const OPERATORS: Record<string, string> = {
-  billberry: "Billberry", telema: "Telema", finbite: "Finbite (Omniva)", unifiedpost: "Unifiedpost", "e-arveldaja": "e-arveldaja (RIK)",
-};
-
 function BillberryStep({ company, onSave }: { company: Company; onSave: (c: Company) => void }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
-  const [kyc, setKyc] = useState(false);
-  const s = company.billberry;
+  const bb: BillberrySettings = company.billberry ?? { env: "test", keyId: "", key: "" };
+  // võtme muutmisel kaob "kontrollitud" märge
+  const setBb = (patch: Partial<BillberrySettings>) => onSave({ ...company, billberry: { ...bb, ...patch, checkedAt: undefined } });
 
-  async function run(action: "status" | "register") {
+  async function check() {
     setBusy(true);
     setMsg("");
     try {
-      const org = await callBillberry<BillberryOrganization | null>({ action, regNumber: company.regNumber });
-      const billberry: BillberryStatus = {
-        checkedAt: new Date().toISOString(),
-        registered: !!org && !org.deletedAt,
-        creatingReceivedEnabled: !!org?.creatingReceivedEnabled,
-        receivingOperator: org?.receivingOperator ?? null,
-      };
-      onSave({ ...company, billberry });
-      if (action === "register") setKyc(false);
+      await callBillberry(bb, { action: "check" });
+      onSave({ ...company, billberry: { ...bb, checkedAt: new Date().toISOString() } });
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
     } finally {
@@ -402,56 +389,31 @@ function BillberryStep({ company, onSave }: { company: Company; onSave: (c: Comp
     }
   }
 
-  const registered = !!s?.registered && s.creatingReceivedEnabled;
-  const done = registered && !!s?.receivingOperator;
+  const filled = !!bb.keyId && !!bb.key;
   return (
-    <Step n={3} title="Ostuarvete saatmine otse Booksi (Billberry)" state={done ? "done" : "optional"}>
+    <Step n={3} title="Ostuarvete saatmine Booksi (Billberry)" state={bb.checkedAt ? "done" : "optional"}>
       <p className="hint">
-        Valikuline. Ilma selleta saad arved alla laadida XML-failina ja Booksi käsitsi importida.
-        Billberryga lähevad ostuarved ühe nupuvajutusega Booksi registrisse <i>Tarnija e-arved</i>.
+        Valikuline. Billberry kaudu lähevad ostuarved ühe nupuvajutusega Booksi. Ilma selleta saad arved alla laadida
+        XML-failina. Võtme saad Billberrys: <b>Konto ja seaded → API võtmed → Loo uus võti</b>.
       </p>
-      {!/^\d{8}$/.test(company.regNumber) ? (
-        <p className="callout">Täida enne samm 1 (registrikood).</p>
-      ) : (
-        <>
-          {s && (
-            <dl className="facts">
-              <dt>Billberrys registreeritud</dt><dd>{registered ? "jah" : "ei"}</dd>
-              <dt>Firma e-arve operaator</dt>
-              <dd className={s.receivingOperator ? "" : "text-err"}>
-                {s.receivingOperator ? (OPERATORS[s.receivingOperator] ?? s.receivingOperator) : "puudub – firma ei võta e-arveid vastu"}
-              </dd>
-              <dt>Kontrollitud</dt><dd>{new Date(s.checkedAt).toLocaleString("et-EE")}</dd>
-            </dl>
-          )}
-          {registered && !s?.receivingOperator && (
-            <p className="callout err">
-              Firma ei võta e-arveid vastu. Lülita <b>Booksis</b> e-arvete vastuvõtt sisse (vali operaator), siis vajuta „Kontrolli olekut“.
-            </p>
-          )}
-          {!registered && (
-            <label className="inline">
-              <input type="checkbox" checked={kyc} onChange={(e) => setKyc(e.target.checked)} />
-              Olen kontrollinud, et mul on õigus selle firma nimel tegutseda (esindusõigus e-äriregistris või volitus)
-            </label>
-          )}
-          <div className="actions">
-            {!registered && <button disabled={busy || !kyc} onClick={() => run("register")}>Registreeri Billberrys</button>}
-            <button className="secondary" disabled={busy} onClick={() => run("status")}>{busy ? "Ootan Billberryt …" : "Kontrolli olekut"}</button>
-          </div>
-        </>
-      )}
+      <div className="form-grid">
+        <label className="field">
+          <span className="label">Billberry keskkond</span>
+          <select value={bb.env} onChange={(e) => setBb({ env: e.target.value as BillberrySettings["env"] })}>
+            <option value="test">Test (dev.billberry.ee)</option>
+            <option value="production">Päris (app.billberry.ee)</option>
+          </select>
+        </label>
+        <span />
+        <Field label="Võtme ID" value={bb.keyId} placeholder="nt 870" onChange={(v) => setBb({ keyId: v.trim() })} />
+        <Field label="Võti" type="password" value={bb.key} placeholder="32 märki" onChange={(v) => setBb({ key: v.trim() })} />
+      </div>
+      <div className="actions">
+        <button disabled={busy || !filled} onClick={check}>{busy ? "Kontrollin …" : "Kontrolli ühendust"}</button>
+        {bb.checkedAt && <span className="text-ok">✓ Ühendus töötab ({new Date(bb.checkedAt).toLocaleString("et-EE")})</span>}
+      </div>
+      <p className="hint">Võti peab olema loodud <b>selle firma</b> ({company.regNumber || "registrikood"}) Billberry kontol – Billberry kontrollib, et arve ostja oleks see firma.</p>
       {msg && <p className="callout err">{msg}</p>}
     </Step>
-  );
-}
-
-function PasswordField() {
-  const [value, setValue] = useState("");
-  useEffect(() => setValue(store.password()), []);
-  return (
-    <Field label="WiseBilli parool" type="password" value={value}
-      hint="Vajalik Billberry kaudu saatmiseks. Sisestad ühe korra, brauser jätab meelde."
-      onChange={(v) => (setValue(v), store.setPassword(v))} />
   );
 }
