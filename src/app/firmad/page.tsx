@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import type { Account, AccountType, Company, InvoiceDirection, RegisterEntry } from "@/lib/types";
+import type { Account, AccountType, BillberryStatus, Company, InvoiceDirection, RegisterEntry } from "@/lib/types";
+import type { BillberryOrganization } from "@/lib/billberry";
 import { TEMPLATE_ACCOUNTS, accountsFor } from "@/lib/accounts";
 import { store } from "@/lib/store";
-import { downloadFile, newId, postFile } from "@/lib/upload";
+import { callBillberry, downloadFile, newId, postFile } from "@/lib/upload";
 
 const TYPES: AccountType[] = ["vara", "kohustus", "omakapital", "tulu", "kulu"];
 
@@ -76,6 +77,8 @@ export default function CompaniesPage() {
             <input type="file" accept=".json" hidden onChange={(e) => e.target.files?.[0] && restore(e.target.files[0])} />
           </label>
           {status && <p className="status">{status}</p>}
+          <hr />
+          <PasswordField />
         </aside>
 
         {selected ? (
@@ -157,6 +160,8 @@ function CompanyEditor({ company, others, onSave, onDelete }: {
         </div>
       </section>
 
+      <BillberryCard company={company} onSave={onSave} />
+
       <section className="card">
         <div className="card-head"><strong>Kontoplaan ({company.accounts.length})</strong></div>
         <div className="actions">
@@ -227,6 +232,88 @@ function CompanyEditor({ company, others, onSave, onDelete }: {
         </div>
       </section>
     </div>
+  );
+}
+
+const OPERATORS: Record<string, string> = {
+  billberry: "Billberry", telema: "Telema", finbite: "Finbite (Omniva)", unifiedpost: "Unifiedpost", "e-arveldaja": "e-arveldaja (RIK)",
+};
+
+function BillberryCard({ company, onSave }: { company: Company; onSave: (c: Company) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [kyc, setKyc] = useState(false);
+  const s = company.billberry;
+
+  async function run(action: "status" | "register") {
+    setBusy(true);
+    setMsg("");
+    try {
+      const org = await callBillberry<BillberryOrganization | null>({ action, regNumber: company.regNumber });
+      const billberry: BillberryStatus = {
+        checkedAt: new Date().toISOString(),
+        registered: !!org && !org.deletedAt,
+        creatingReceivedEnabled: !!org?.creatingReceivedEnabled,
+        receivingOperator: org?.receivingOperator ?? null,
+      };
+      onSave({ ...company, billberry });
+      if (action === "register") setKyc(false);
+    } catch (e) {
+      setMsg(`Viga: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const ready = s?.registered && s.creatingReceivedEnabled;
+  return (
+    <section className="card">
+      <div className="card-head">
+        <strong>Billberry (ostuarved otse Booksi)</strong>
+        {s && <span className={`badge ${ready && s.receivingOperator ? "ok" : "err"}`}>
+          {!ready ? "Registreerimata" : s.receivingOperator ? "Valmis" : "E-arvete vastuvõtt puudub"}</span>}
+      </div>
+      {!company.regNumber ? (
+        <p className="muted small">Lisa firmale registrikood.</p>
+      ) : (
+        <>
+          {s && (
+            <p className="small">
+              E-arve operaator: <b>{s.receivingOperator ? (OPERATORS[s.receivingOperator] ?? s.receivingOperator) : "puudub"}</b>
+              <span className="muted"> · kontrollitud {new Date(s.checkedAt).toLocaleString("et-EE")}</span>
+            </p>
+          )}
+          {s && ready && !s.receivingOperator && (
+            <p className="small warn">
+              Firma ei võta e-arveid vastu. Lülita Booksis e-arvete vastuvõtt sisse (vali operaator) ja kontrolli uuesti –
+              enne seda Billberry arveid edasi saata ei saa.
+            </p>
+          )}
+          {!ready && (
+            <label className="inline small">
+              <input type="checkbox" checked={kyc} onChange={(e) => setKyc(e.target.checked)} />
+              Olen kontrollinud, et mul on õigus selle firma nimel tegutseda (esindusõigus e-äriregistris või volitus)
+            </label>
+          )}
+          <div className="actions">
+            {!ready && <button disabled={busy || !kyc} onClick={() => run("register")}>Registreeri Billberrys</button>}
+            <button className="secondary" disabled={busy} onClick={() => run("status")}>Kontrolli olekut</button>
+          </div>
+        </>
+      )}
+      {msg && <p className="status">{msg}</p>}
+    </section>
+  );
+}
+
+function PasswordField() {
+  const [value, setValue] = useState("");
+  useEffect(() => setValue(store.password()), []);
+  return (
+    <label className="field">
+      <span>WiseBilli parool (Billberry saatmiseks)</span>
+      <input type="password" value={value} onChange={(e) => (setValue(e.target.value), store.setPassword(e.target.value))} />
+    </label>
   );
 }
 

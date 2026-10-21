@@ -1,3 +1,5 @@
+import { store } from "./store";
+
 /** Saadab faili /api/parse-le ja tagastab JSON-i (või viskab serveri veateate). */
 export async function postFile<T>(file: File, fields: Record<string, string>): Promise<T> {
   const form = new FormData();
@@ -8,6 +10,21 @@ export async function postFile<T>(file: File, fields: Record<string, string>): P
   const json = await res.json();
   if (!res.ok) throw new Error(json.error ?? res.statusText);
   return json as T;
+}
+
+/** Kutsub /api/billberry-t (partneri võti on serveris). Viga visatakse eestikeelse selgitusega. */
+export async function callBillberry<T>(body: Record<string, string>): Promise<T> {
+  const res = await fetch("/api/billberry", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-wisebill-password": store.password() },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json();
+  if (!res.ok) {
+    const bb = json.billberry as { status: number; message: string; description: string | null } | undefined;
+    throw new Error(bb ? `${json.error} (Billberry ${bb.status} ${bb.message}${bb.description ? `: ${bb.description}` : ""})` : json.error);
+  }
+  return json.data as T;
 }
 
 /** Laeb brauseris faili alla. */

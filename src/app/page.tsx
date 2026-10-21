@@ -9,7 +9,7 @@ import { prepareForCompany, rememberMappings } from "@/lib/mapping";
 import { accountsFor } from "@/lib/accounts";
 import { findDuplicate, toRegisterEntry, type DuplicateHit } from "@/lib/duplicates";
 import { store } from "@/lib/store";
-import { downloadFile, postFile } from "@/lib/upload";
+import { callBillberry, downloadFile, postFile } from "@/lib/upload";
 
 const VAT_RATES = [24, 22, 13, 9, 5, 0];
 const IMAGE_RE = /\.(png|jpe?g|webp|bmp|gif|tiff?)$/i;
@@ -84,18 +84,42 @@ export default function Home() {
     validate(inv, company).length === 0 && (duplicates.get(inv.id)?.level !== "kindel" || inv.allowDuplicate);
   const ready = invoices.filter(isReady);
 
+  // Register + õpitud vastendused; tehtud arved eemaldatakse eelvaatest
+  function finish(company: Company, done: Invoice[]) {
+    store.addToRegister(company.id, done.map((i) => toRegisterEntry(i)));
+    store.saveMappings(company.id, rememberMappings(done, store.mappings(company.id)));
+    setRegister(store.register(company.id));
+    const ids = new Set(done.map((i) => i.id));
+    setInvoices((prev) => prev.filter((i) => !ids.has(i.id)));
+  }
+
   function exportXml() {
     if (!company) return;
     downloadFile(`books-earve-${company.regNumber || company.name}-${new Date().toISOString().slice(0, 10)}.xml`,
       buildEInvoiceXml(ready), "application/xml");
-    // Register + õpitud vastendused; eksporditud arved eemaldatakse eelvaatest
-    store.addToRegister(company.id, ready.map((i) => toRegisterEntry(i)));
-    store.saveMappings(company.id, rememberMappings(ready, store.mappings(company.id)));
-    setRegister(store.register(company.id));
-    const done = new Set(ready.map((i) => i.id));
-    setInvoices((prev) => prev.filter((i) => !done.has(i.id)));
-    setStatus(`Eksporditud ${done.size} arvet ja lisatud registrisse`);
+    finish(company, ready);
+    setStatus(`Eksporditud ${ready.length} arvet ja lisatud registrisse`);
   }
+
+  // Ostuarved ükshaaval Billberrysse (üks arve päringu kohta), sealt firma e-arve operaatori kaudu Booksi
+  async function sendToBillberry() {
+    if (!company) return;
+    const sent: Invoice[] = [];
+    for (const [n, inv] of ready.entries()) {
+      setStatus(`Saadan Billberrysse ${n + 1}/${ready.length}: ${inv.number} …`);
+      try {
+        await callBillberry({ action: "upload", xml: buildEInvoiceXml([inv]) });
+        sent.push(inv);
+      } catch (e) {
+        update(inv.id, (i) => ({ ...i, sendError: e instanceof Error ? e.message : String(e) }));
+      }
+    }
+    finish(company, sent);
+    const failed = ready.length - sent.length;
+    setStatus(`Saadetud ${sent.length} arvet Booksi (Tarnija e-arved)` + (failed ? ` · ${failed} ebaõnnestus, vaata arvete juurest` : ""));
+  }
+  const billberryReady = direction === "purchase" && !!company?.billberry?.registered &&
+    !!company.billberry.creatingReceivedEnabled && !!company.billberry.receivingOperator;
 
   if (!companies.length)
     return (
@@ -157,7 +181,15 @@ export default function Home() {
       {invoices.length > 0 && (
         <div className="footer">
           <span>{ready.length} / {invoices.length} arvet valmis eksportimiseks</span>
-          <button disabled={ready.length === 0} onClick={exportXml}>Laadi alla Books XML</button>
+          {direction === "purchase" && (
+            <button disabled={ready.length === 0 || !billberryReady} onClick={sendToBillberry}
+              title={billberryReady ? "Billberry kaudu Booksi registrisse Tarnija e-arved" : "Firma pole Billberrys valmis – vaata lehte Firmad"}>
+              Saada Booksi (Billberry)
+            </button>
+          )}
+          <button className={direction === "purchase" ? "secondary" : ""} disabled={ready.length === 0} onClick={exportXml}>
+            Laadi alla Books XML
+          </button>
         </div>
       )}
     </main>
@@ -271,8 +303,9 @@ function InvoiceCard({ inv, company, duplicate, onChange, onRemove }: {
         <div>Neto: <b>{t.net.toFixed(2)}</b> · KM: <b>{t.vat.toFixed(2)}</b> · Kokku: <b>{t.gross.toFixed(2)} {inv.currency}</b></div>
       </div>
 
-      {(errors.length > 0 || inv.warnings.length > 0) && (
+      {(errors.length > 0 || inv.warnings.length > 0 || inv.sendError) && (
         <ul className="issues">
+          {inv.sendError && <li className="err">Billberry: {inv.sendError}</li>}
           {errors.map((e) => <li key={e} className="err">{e}</li>)}
           {inv.warnings.map((w) => <li key={w} className="warn">{w}</li>)}
         </ul>

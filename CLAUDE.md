@@ -25,6 +25,11 @@ Algdokumendid (PDF, Excel, CSV, pildid) → eelvaade/parandus brauseris → **Ex
 - `src/lib/store.ts` – KÕIK püsiandmed (firmad, kontoplaanid, register, vastendused); praegu localStorage.
   Supabase'i üleminek = ainult selle faili vahetus. Varukoopia JSON-ina lehel /firmad.
 - Lehed: `/` (import + eelvaade), `/firmad` (firmad, kontoplaan, Booksi arvete registri laadimine).
+- `src/lib/billberry.ts` + `src/app/api/billberry/route.ts` – Billberry partneri API (ainult server, võtmed
+  env-is, vt `.env.example`). Ostuarve: `POST /partners/{id}/invoices/received` + `X-Forward: immediately`,
+  **üks arve päringu kohta**. Firma registreerimine: `PUT …/organizations/EE:{regkood}` `{creatingReceivedEnabled:true}`.
+  `receivingEnabled` jäetakse meelega puutumata (vahetaks äriregistris firma operaatori). API-tee kaitseb
+  `WISEBILL_PASSWORD` (päis `x-wisebill-password`, brauseris localStorage'is); toodangus ilma selleta keeldub.
 - `src/app/api/parse/route.ts` – Node runtime, `pdf-parse` v2 (`new PDFParse({data}).getText()`),
   `serverExternalPackages: ["pdf-parse"]` on next.config.ts-is vajalik.
 
@@ -46,4 +51,7 @@ Algdokumendid (PDF, Excel, CSV, pildid) → eelvaade/parandus brauseris → **Ex
 ## Teadaolevad lüngad
 - `xlsx` paigaldatakse SheetJS CDN-ist (npm-i versioon on vana ja haavatav) – ära vaheta npm-i omaga.
 - XML vastab ametlikule XSD-le, aga pole päris Booksi impordiga testitud.
+- Billberry: testitud ainult võlts-fetchiga, mitte staging-keskkonnas. Kinnitamata: kas kulukontod
+  (`GeneralLedger`) ja `serviceId` jõuavad operaatori kaudu Booksi; kas `creatingReceivedEnabled` on partnerile tasuta.
+  Müügiarved lähevad endiselt ainult XML-failina.
 - Pangaväljavõtted (camt.053 / CSV) ja Books REST API (`/api/1/IVVc`) on veel tegemata.

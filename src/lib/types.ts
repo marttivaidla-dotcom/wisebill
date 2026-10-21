@@ -40,6 +40,7 @@ export interface Invoice {
   source: string; // failinimi, millest arve tuli
   warnings: string[]; // parseri hoiatused, mida kasutaja peab eelvaates kontrollima
   allowDuplicate?: boolean; // kasutaja kinnitas, et see pole duplikaat
+  sendError?: string; // viimase Billberrysse saatmise viga
 }
 
 export interface VatBreakdown {
@@ -75,6 +76,15 @@ export interface Company {
   accounts: Account[]; // kontoplaan
   defaultExpenseAccount?: string; // vaikimisi kulukonto ostuarve ridadele
   defaultIncomeAccount?: string; // vaikimisi tulukonto müügiarve ridadele
+  billberry?: BillberryStatus; // viimati kontrollitud olek Billberrys
+}
+
+/** Firma olek Billberrys (e-arve operaator, mille kaudu ostuarved Booksi saadetakse). */
+export interface BillberryStatus {
+  checkedAt: string;
+  registered: boolean;
+  creatingReceivedEnabled: boolean; // ostuarvete üleslaadimine lubatud
+  receivingOperator: string | null; // firma e-arve operaator, nt "billberry", "telema", "finbite"; null = ei võta vastu
 }
 
 /** Juba imporditud (või Booksis olemasolev) arve – duplikaatide kontrolliks. */
