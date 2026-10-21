@@ -30,6 +30,9 @@ Algdokumendid (PDF, Excel, CSV, pildid) → eelvaade/parandus brauseris → **Ex
   **üks arve päringu kohta**. Firma registreerimine: `PUT …/organizations/EE:{regkood}` `{creatingReceivedEnabled:true}`.
   `receivingEnabled` jäetakse meelega puutumata (vahetaks äriregistris firma operaatori). API-tee kaitseb
   `WISEBILL_PASSWORD` (päis `x-wisebill-password`, brauseris localStorage'is); toodangus ilma selleta keeldub.
+- `src/lib/ariregister.ts` + `src/app/api/ariregister/route.ts` – äriregistri tasuta avalik otsing
+  (`/est/api/autocomplete`, JSON) ja KMKR firma avalikult lehelt (HTML-ist regexiga, kehtib kui periood "– ..").
+  /firmad: nime väljal otsing, valides täidetakse reg.kood, KMKR, aadress.
 - `src/app/api/parse/route.ts` – Node runtime, `pdf-parse` v2 (`new PDFParse({data}).getText()`),
   `serverExternalPackages: ["pdf-parse"]` on next.config.ts-is vajalik.
 

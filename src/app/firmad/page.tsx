@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { Account, AccountType, BillberryStatus, Company, InvoiceDirection, RegisterEntry } from "@/lib/types";
 import type { BillberryOrganization } from "@/lib/billberry";
+import { STATUS_LABELS, type RegistryCompany, type RegistryDetails } from "@/lib/ariregister";
 import { TEMPLATE_ACCOUNTS, accountsFor } from "@/lib/accounts";
 import { store } from "@/lib/store";
 import { callBillberry, downloadFile, newId, postFile } from "@/lib/upload";
@@ -149,9 +150,10 @@ function CompanyEditor({ company, others, onSave, onDelete }: {
       <section className="card">
         <div className="card-head"><strong>Firma andmed</strong><button className="link danger" onClick={onDelete}>Kustuta firma</button></div>
         <div className="grid">
-          <Field label="Nimi" value={company.name} onChange={(v) => set("name", v)} />
+          <RegistrySearch company={company} onSave={onSave} />
           <Field label="Registrikood" value={company.regNumber} onChange={(v) => set("regNumber", v.trim())} />
           <Field label="KMKR" value={company.vatNumber ?? ""} onChange={(v) => set("vatNumber", v.trim())} />
+          <Field label="Aadress" value={company.address ?? ""} onChange={(v) => set("address", v)} />
           <Field label="IBAN" value={company.iban ?? ""} onChange={(v) => set("iban", v.replace(/\s/g, "").toUpperCase())} />
           <AccountSelect label="Vaikimisi kulukonto" accounts={accountsFor(company.accounts, "purchase")}
             value={company.defaultExpenseAccount ?? ""} onChange={(v) => set("defaultExpenseAccount", v)} />
@@ -232,6 +234,68 @@ function CompanyEditor({ company, others, onSave, onDelete }: {
         </div>
       </section>
     </div>
+  );
+}
+
+/** Firma nimi + äriregistri otsing: valides täidetakse reg.kood, KMKR ja aadress. */
+function RegistrySearch({ company, onSave }: { company: Company; onSave: (c: Company) => void }) {
+  const [hits, setHits] = useState<RegistryCompany[]>([]);
+  const [open, setOpen] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  // Otsing 300 ms pärast viimast klahvivajutust (äriregistrit ei koormata iga tähega)
+  useEffect(() => {
+    const q = company.name.trim();
+    if (!open || q.length < 3) return setHits([]);
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/ariregister?q=${encodeURIComponent(q)}`);
+        const json = await res.json();
+        setHits(res.ok ? json.companies : []);
+      } catch {
+        setHits([]);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [company.name, open]);
+
+  async function pick(hit: RegistryCompany) {
+    setOpen(false);
+    setHits([]);
+    setMsg("Laen äriregistrist …");
+    let d: RegistryDetails = { ...hit, vatNumber: null };
+    try {
+      const res = await fetch(`/api/ariregister?code=${hit.regNumber}`);
+      const json = await res.json();
+      if (res.ok) d = json.company;
+    } catch {
+      // jääb otsingutulemuse andmete peale, KMKR tühi
+    }
+    onSave({ ...company, name: d.name, regNumber: d.regNumber, vatNumber: d.vatNumber ?? "", address: d.address });
+    const status = d.status !== "R" ? ` · NB! Firma on ${STATUS_LABELS[d.status] ?? d.status}` : "";
+    setMsg(`Äriregistrist: ${d.vatNumber ? `KMKR ${d.vatNumber}` : "pole käibemaksukohustuslane"}${status}`);
+  }
+
+  return (
+    <label className="field suggest">
+      <span>Nimi (otsi äriregistrist)</span>
+      <input value={company.name} onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onChange={(e) => (setOpen(true), setMsg(""), onSave({ ...company, name: e.target.value }))} />
+      {open && hits.length > 0 && (
+        <ul className="suggestions">
+          {hits.map((h) => (
+            <li key={h.regNumber}>
+              <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => pick(h)}>
+                <b>{h.name}</b> <span className="muted">{h.regNumber}</span>
+                {h.status !== "R" && <span className="warn"> · {STATUS_LABELS[h.status] ?? h.status}</span>}
+                <small>{h.address}</small>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {msg && <small className="muted">{msg}</small>}
+    </label>
   );
 }
 

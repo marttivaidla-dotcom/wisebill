@@ -72,6 +72,7 @@ export interface Company {
   name: string;
   regNumber: string;
   vatNumber?: string;
+  address?: string; // juriidiline aadress (äriregistrist)
   iban?: string;
   accounts: Account[]; // kontoplaan
   defaultExpenseAccount?: string; // vaikimisi kulukonto ostuarve ridadele
