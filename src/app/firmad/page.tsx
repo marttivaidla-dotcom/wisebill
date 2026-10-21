@@ -1,13 +1,14 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { Account, AccountType, BillberryStatus, Company, InvoiceDirection, RegisterEntry } from "@/lib/types";
 import type { BillberryOrganization } from "@/lib/billberry";
 import { STATUS_LABELS, type RegistryCompany, type RegistryDetails } from "@/lib/ariregister";
 import { TEMPLATE_ACCOUNTS, accountsFor } from "@/lib/accounts";
+import { companyIssues } from "@/lib/readiness";
 import { store } from "@/lib/store";
 import { callBillberry, downloadFile, newId, postFile } from "@/lib/upload";
+import { Field, Select, Step } from "../ui";
 
 const TYPES: AccountType[] = ["vara", "kohustus", "omakapital", "tulu", "kulu"];
 
@@ -29,11 +30,15 @@ export default function CompaniesPage() {
     reload();
   }
 
+  function select(id: string) {
+    setSelectedId(id);
+    store.setActiveCompanyId(id);
+  }
+
   function addCompany() {
-    const c: Company = { id: newId(), name: "Uus firma", regNumber: "", accounts: [] };
+    const c: Company = { id: newId(), name: "", regNumber: "", accounts: [] };
     save(c);
-    setSelectedId(c.id);
-    store.setActiveCompanyId(c.id);
+    select(c.id);
   }
 
   async function restore(file: File) {
@@ -50,49 +55,66 @@ export default function CompaniesPage() {
     <main>
       <header className="page-head">
         <div>
-          <h1>Firmad ja kontoplaanid</h1>
-          <p className="muted">Iga firma = eraldi Booksi andmebaas oma kontoplaani ja arvete registriga</p>
+          <h1>Firmad</h1>
+          <p className="muted">Lisa iga firma, kelle arveid Booksi viid. Iga firma = eraldi Booksi andmebaas.</p>
         </div>
-        <Link href="/">← Arvete import</Link>
       </header>
 
       <div className="split">
-        <aside className="card">
-          {companies.map((c) => (
-            <button key={c.id} className={`list-item ${c.id === selectedId ? "active" : ""}`}
-              onClick={() => (setSelectedId(c.id), store.setActiveCompanyId(c.id))}>
-              <b>{c.name || "(nimeta)"}</b>
-              <small>{c.regNumber || "reg.kood puudub"} · {c.accounts.length} kontot</small>
-            </button>
-          ))}
-          <button onClick={addCompany}>+ Lisa firma</button>
-          <hr />
-          <p className="muted small">Andmed on selles brauseris. Tee regulaarselt varukoopia.</p>
-          <button className="secondary" onClick={() =>
-            downloadFile(`wisebill-varukoopia-${new Date().toISOString().slice(0, 10)}.json`,
-              JSON.stringify(store.exportAll(), null, 2), "application/json")}>
-            Varunda (JSON)
-          </button>
-          <label className="button secondary">
-            Taasta varukoopiast
-            <input type="file" accept=".json" hidden onChange={(e) => e.target.files?.[0] && restore(e.target.files[0])} />
-          </label>
-          {status && <p className="status">{status}</p>}
-          <hr />
-          <PasswordField />
+        <aside className="stack">
+          <section className="card">
+            <h2 className="side-title">Sinu firmad</h2>
+            {companies.length === 0 && <p className="muted small">Firmasid pole veel. Alusta nupust allpool.</p>}
+            {companies.map((c) => {
+              const missing = companyIssues(c).filter((i) => i.required).length;
+              return (
+                <button key={c.id} className={`list-item ${c.id === selectedId ? "active" : ""}`} onClick={() => select(c.id)}>
+                  <b>{c.name || "(nimi puudub)"}</b>
+                  <small>{c.regNumber || "registrikood puudub"}</small>
+                  {missing > 0
+                    ? <small className="text-err">● {missing} kohustuslikku välja täitmata</small>
+                    : <small className="text-ok">● Valmis arvete importimiseks</small>}
+                </button>
+              );
+            })}
+            <button className="full" onClick={addCompany}>+ Lisa uus firma</button>
+          </section>
+
+          <section className="card">
+            <h2 className="side-title">Seaded</h2>
+            <PasswordField />
+            <hr />
+            <p className="hint">Andmed on ainult selles brauseris. Tee aeg-ajalt varukoopia.</p>
+            <div className="actions">
+              <button className="secondary" onClick={() =>
+                downloadFile(`wisebill-varukoopia-${new Date().toISOString().slice(0, 10)}.json`,
+                  JSON.stringify(store.exportAll(), null, 2), "application/json")}>
+                Salvesta varukoopia
+              </button>
+              <label className="button secondary">
+                Taasta varukoopiast
+                <input type="file" accept=".json" hidden onChange={(e) => e.target.files?.[0] && restore(e.target.files[0])} />
+              </label>
+            </div>
+            {status && <p className="status">{status}</p>}
+          </section>
         </aside>
 
         {selected ? (
           <CompanyEditor key={selected.id} company={selected} others={companies.filter((c) => c.id !== selected.id)}
             onSave={save}
             onDelete={() => {
-              if (!confirm(`Kustuta "${selected.name}" koos kontoplaani ja arvete registriga?`)) return;
+              if (!confirm(`Kustuta "${selected.name || "nimeta firma"}" koos kontoplaani ja arvete registriga?`)) return;
               store.deleteCompany(selected.id);
               setSelectedId("");
               reload();
             }} />
         ) : (
-          <section className="card muted">Vali vasakult firma või lisa uus.</section>
+          <section className="card empty">
+            <h2>Vali vasakult firma või lisa uus</h2>
+            <p className="muted">Uue firma lisamisel otsid selle äriregistrist – registrikood, KMKR ja aadress täituvad ise.</p>
+            <button onClick={addCompany}>+ Lisa uus firma</button>
+          </section>
         )}
       </div>
     </main>
@@ -106,6 +128,12 @@ function CompanyEditor({ company, others, onSave, onDelete }: {
   const [msg, setMsg] = useState("");
   const [register, setRegister] = useState<RegisterEntry[]>([]);
   useEffect(() => setRegister(store.register(company.id)), [company.id]);
+
+  const issues = companyIssues(company);
+  const err = (field: string) => issues.find((i) => i.field === field)?.message;
+  const required = issues.filter((i) => i.required);
+  const detailsDone = !err("name") && !err("regNumber");
+  const accountsDone = !err("accounts") && !err("defaultExpenseAccount");
 
   const set = <K extends keyof Company>(k: K, v: Company[K]) => onSave({ ...company, [k]: v });
   const setAccounts = (accounts: Account[]) =>
@@ -144,77 +172,109 @@ function CompanyEditor({ company, others, onSave, onDelete }: {
     .filter(({ a }) => !filter || `${a.code} ${a.name}`.toLowerCase().includes(filter.toLowerCase()));
   const count = (src: RegisterEntry["source"], dir: InvoiceDirection) =>
     register.filter((e) => e.source === src && e.direction === dir).length;
+  const toOptions = (list: Account[]) => list.map((a) => ({ value: a.code, label: `${a.code} ${a.name}` }));
 
   return (
     <div className="stack">
-      <section className="card">
-        <div className="card-head"><strong>Firma andmed</strong><button className="link danger" onClick={onDelete}>Kustuta firma</button></div>
-        <div className="grid">
-          <RegistrySearch company={company} onSave={onSave} />
-          <Field label="Registrikood" value={company.regNumber} onChange={(v) => set("regNumber", v.trim())} />
-          <Field label="KMKR" value={company.vatNumber ?? ""} onChange={(v) => set("vatNumber", v.trim())} />
-          <Field label="Aadress" value={company.address ?? ""} onChange={(v) => set("address", v)} />
-          <Field label="IBAN" value={company.iban ?? ""} onChange={(v) => set("iban", v.replace(/\s/g, "").toUpperCase())} />
-          <AccountSelect label="Vaikimisi kulukonto" accounts={accountsFor(company.accounts, "purchase")}
-            value={company.defaultExpenseAccount ?? ""} onChange={(v) => set("defaultExpenseAccount", v)} />
-          <AccountSelect label="Vaikimisi tulukonto" accounts={accountsFor(company.accounts, "sales")}
-            value={company.defaultIncomeAccount ?? ""} onChange={(v) => set("defaultIncomeAccount", v)} />
+      {required.length > 0 ? (
+        <div className="callout err">
+          <b>Firma pole veel valmis.</b> Täida punasega märgitud väljad:
+          <ul>{required.map((i) => <li key={i.field + i.message}>{i.message}</li>)}</ul>
         </div>
-      </section>
+      ) : (
+        <div className="callout ok"><b>✓ Firma on valmis.</b> Mine <a href="/">Arvete importi</a> ja lae arved üles.</div>
+      )}
 
-      <BillberryCard company={company} onSave={onSave} />
+      <Step n={1} title="Firma andmed" state={detailsDone ? "done" : "todo"}>
+        <p className="hint">Kirjuta firma nimi või registrikood ja vali nimekirjast – ülejäänud väljad täituvad äriregistrist.</p>
+        <div className="form-grid">
+          <RegistrySearch company={company} onSave={onSave} error={err("name")} />
+          <Field label="Registrikood" required value={company.regNumber} error={err("regNumber")}
+            placeholder="8 numbrit" onChange={(v) => set("regNumber", v.trim())} />
+          <Field label="KMKR number" value={company.vatNumber ?? ""} error={err("vatNumber")}
+            placeholder="EE123456789" hint="Kui firma pole käibemaksukohustuslane, jäta tühjaks"
+            onChange={(v) => set("vatNumber", v.trim().toUpperCase())} />
+          <Field label="Aadress" wide value={company.address ?? ""} onChange={(v) => set("address", v)} />
+          <Field label="IBAN" value={company.iban ?? ""} error={err("iban")} placeholder="EE…"
+            hint="Vajalik müügiarvetel (kuhu klient maksab)"
+            onChange={(v) => set("iban", v.replace(/\s/g, "").toUpperCase())} />
+        </div>
+      </Step>
 
-      <section className="card">
-        <div className="card-head"><strong>Kontoplaan ({company.accounts.length})</strong></div>
+      <Step n={2} title="Kontoplaan ja vaikimisi kontod" state={accountsDone ? "done" : "todo"}>
+        {!company.accounts.length ? (
+          <div className="callout err">
+            <b>Kontoplaan puudub.</b> Ilma selleta ei tea WiseBill, millisele kontole arve read panna. Vali üks:
+          </div>
+        ) : (
+          <p className="hint">Kontoplaanis on {company.accounts.length} kontot. Saad selle asendada või kontosid allpool muuta.</p>
+        )}
         <div className="actions">
           <label className="button">
-            Impordi Excel/CSV
+            Impordi Booksi kontoplaan (Excel/CSV)
             <input type="file" hidden accept=".xlsx,.xls,.csv,.ods" onChange={(e) => e.target.files?.[0] && importAccounts(e.target.files[0])} />
           </label>
-          <button className="secondary" onClick={() => replaceAccounts(TEMPLATE_ACCOUNTS, "Näidiskontoplaan")}>Näidiskontoplaan</button>
+          <button className="secondary" onClick={() => replaceAccounts(TEMPLATE_ACCOUNTS, "Näidiskontoplaan")}>Kasuta näidiskontoplaani</button>
           {others.filter((o) => o.accounts.length).map((o) => (
             <button key={o.id} className="secondary" onClick={() => replaceAccounts(o.accounts, `Kopeeritud firmalt ${o.name}`)}>
-              Kopeeri: {o.name}
+              Kopeeri firmalt {o.name}
             </button>
           ))}
         </div>
-        <p className="muted small">Faili veerud: <b>Konto</b> (kood), <b>Nimi</b>, valikuliselt <b>Tüüp</b> (kulu/tulu/vara/kohustus/omakapital). Tüübi puudumisel tuletatakse see koodi esimesest numbrist.</p>
+        <p className="hint">Faili veerud: <b>Konto</b> (kood), <b>Nimi</b>, valikuliselt <b>Tüüp</b> (kulu/tulu/vara/kohustus/omakapital).</p>
         {msg && <p className="status">{msg}</p>}
 
-        <input placeholder="Otsi kontot…" value={filter} onChange={(e) => setFilter(e.target.value)} className="search" />
-        <div className="table-wrap">
-          <table className="compact">
-            <thead><tr><th style={{ width: 110 }}>Kood</th><th>Nimi</th><th style={{ width: 140 }}>Tüüp</th><th style={{ width: 30 }}></th></tr></thead>
-            <tbody>
-              {shown.map(({ a, i }) => (
-                <tr key={i}>
-                  <td><input value={a.code} onChange={(e) => editAccount(i, { code: e.target.value.trim() })} /></td>
-                  <td><input value={a.name} onChange={(e) => editAccount(i, { name: e.target.value })} /></td>
-                  <td>
-                    <select value={a.type} onChange={(e) => editAccount(i, { type: e.target.value as AccountType })}>
-                      {TYPES.map((t) => <option key={t}>{t}</option>)}
-                    </select>
-                  </td>
-                  <td><button className="link" onClick={() => set("accounts", company.accounts.filter((_, j) => j !== i))}>×</button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <button className="link" onClick={() => set("accounts", [...company.accounts, { code: "", name: "", type: "kulu" }])}>+ Lisa konto</button>
-      </section>
+        {company.accounts.length > 0 && (
+          <>
+            <div className="form-grid">
+              <Select label="Vaikimisi kulukonto" required value={company.defaultExpenseAccount ?? ""}
+                error={err("defaultExpenseAccount")} hint="Ostuarve ridadele, kui hankija jaoks pole konto õpitud"
+                options={toOptions(accountsFor(company.accounts, "purchase"))} onChange={(v) => set("defaultExpenseAccount", v)} />
+              <Select label="Vaikimisi tulukonto" value={company.defaultIncomeAccount ?? ""}
+                hint="Müügiarve ridadele" options={toOptions(accountsFor(company.accounts, "sales"))}
+                onChange={(v) => set("defaultIncomeAccount", v)} />
+            </div>
 
-      <section className="card">
-        <div className="card-head"><strong>Arvete register (duplikaatide kontroll)</strong></div>
-        <p className="muted small">
-          Siit eksporditud arved lisatakse registrisse automaatselt. Booksis juba olevate (nt käsitsi sisestatud) arvete
-          kontrolliks ekspordi Booksist ost-/müügiarvete nimekiri Excelisse (veerud nt Arve nr, Hankija/Klient, Kuupäev, Summa) ja lae siia.
+            <details className="accounts">
+              <summary>Vaata ja muuda kontosid ({company.accounts.length})</summary>
+              <input placeholder="Otsi kontot koodi või nime järgi…" value={filter} onChange={(e) => setFilter(e.target.value)} className="search" />
+              <div className="table-wrap">
+                <table className="compact">
+                  <thead><tr><th style={{ width: 110 }}>Kood</th><th>Nimi</th><th style={{ width: 140 }}>Tüüp</th><th style={{ width: 30 }}></th></tr></thead>
+                  <tbody>
+                    {shown.map(({ a, i }) => (
+                      <tr key={i}>
+                        <td><input value={a.code} className={a.code ? "" : "invalid"} onChange={(e) => editAccount(i, { code: e.target.value.trim() })} /></td>
+                        <td><input value={a.name} className={a.name ? "" : "invalid"} onChange={(e) => editAccount(i, { name: e.target.value })} /></td>
+                        <td>
+                          <select value={a.type} onChange={(e) => editAccount(i, { type: e.target.value as AccountType })}>
+                            {TYPES.map((t) => <option key={t}>{t}</option>)}
+                          </select>
+                        </td>
+                        <td><button className="link" title="Kustuta konto" onClick={() => set("accounts", company.accounts.filter((_, j) => j !== i))}>×</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <button className="link" onClick={() => set("accounts", [...company.accounts, { code: "", name: "", type: "kulu" }])}>+ Lisa konto</button>
+            </details>
+          </>
+        )}
+      </Step>
+
+      <BillberryStep company={company} onSave={onSave} />
+
+      <Step n={4} title="Booksis juba olevad arved (duplikaatide kontroll)" state="optional">
+        <p className="hint">
+          WiseBillist saadetud arved jäetakse meelde automaatselt. Et ka Booksi käsitsi sisestatud arveid topelt ei imporditaks,
+          ekspordi Booksist ost- või müügiarvete nimekiri Excelisse (veerud nt Arve nr, Hankija/Klient, Kuupäev, Summa) ja lae see siia.
         </p>
         <table className="compact stats">
           <thead><tr><th></th><th>Ostuarved</th><th>Müügiarved</th></tr></thead>
           <tbody>
-            <tr><td>Eksporditud WiseBillist</td><td>{count("wisebill", "purchase")}</td><td>{count("wisebill", "sales")}</td></tr>
-            <tr><td>Laetud Booksi registrist</td><td>{count("books", "purchase")}</td><td>{count("books", "sales")}</td></tr>
+            <tr><td>Saadetud WiseBillist</td><td>{count("wisebill", "purchase")}</td><td>{count("wisebill", "sales")}</td></tr>
+            <tr><td>Laetud Booksi nimekirjast</td><td>{count("books", "purchase")}</td><td>{count("books", "sales")}</td></tr>
           </tbody>
         </table>
         <div className="actions">
@@ -227,20 +287,25 @@ function CompanyEditor({ company, others, onSave, onDelete }: {
             <input type="file" hidden accept=".xlsx,.xls,.csv,.ods" onChange={(e) => e.target.files?.[0] && importRegister(e.target.files[0], "sales")} />
           </label>
           <button className="link danger" onClick={() => {
-            if (!confirm("Eemalda Booksi registrist laetud kirjed? (WiseBillist eksporditud jäävad alles)")) return;
+            if (!confirm("Eemalda Booksi nimekirjast laetud kirjed? (WiseBillist saadetud jäävad alles)")) return;
             store.clearRegister(company.id, "books");
             setRegister(store.register(company.id));
           }}>Tühjenda Booksi kirjed</button>
         </div>
-      </section>
+      </Step>
+
+      <div className="danger-zone">
+        <button className="link danger" onClick={onDelete}>Kustuta see firma</button>
+      </div>
     </div>
   );
 }
 
 /** Firma nimi + äriregistri otsing: valides täidetakse reg.kood, KMKR ja aadress. */
-function RegistrySearch({ company, onSave }: { company: Company; onSave: (c: Company) => void }) {
+function RegistrySearch({ company, onSave, error }: { company: Company; onSave: (c: Company) => void; error?: string }) {
   const [hits, setHits] = useState<RegistryCompany[]>([]);
   const [open, setOpen] = useState(false);
+  const [searching, setSearching] = useState(false);
   const [msg, setMsg] = useState("");
 
   // Otsing 300 ms pärast viimast klahvivajutust (äriregistrit ei koormata iga tähega)
@@ -248,12 +313,15 @@ function RegistrySearch({ company, onSave }: { company: Company; onSave: (c: Com
     const q = company.name.trim();
     if (!open || q.length < 3) return setHits([]);
     const timer = setTimeout(async () => {
+      setSearching(true);
       try {
         const res = await fetch(`/api/ariregister?q=${encodeURIComponent(q)}`);
         const json = await res.json();
         setHits(res.ok ? json.companies : []);
       } catch {
         setHits([]);
+      } finally {
+        setSearching(false);
       }
     }, 300);
     return () => clearTimeout(timer);
@@ -272,29 +340,34 @@ function RegistrySearch({ company, onSave }: { company: Company; onSave: (c: Com
       // jääb otsingutulemuse andmete peale, KMKR tühi
     }
     onSave({ ...company, name: d.name, regNumber: d.regNumber, vatNumber: d.vatNumber ?? "", address: d.address });
-    const status = d.status !== "R" ? ` · NB! Firma on ${STATUS_LABELS[d.status] ?? d.status}` : "";
-    setMsg(`Äriregistrist: ${d.vatNumber ? `KMKR ${d.vatNumber}` : "pole käibemaksukohustuslane"}${status}`);
+    const status = d.status !== "R" ? ` NB! Firma on ${STATUS_LABELS[d.status] ?? d.status}.` : "";
+    setMsg(`✓ Andmed äriregistrist. ${d.vatNumber ? `KMKR ${d.vatNumber}.` : "Firma pole käibemaksukohustuslane."}${status}`);
   }
 
   return (
-    <label className="field suggest">
-      <span>Nimi (otsi äriregistrist)</span>
-      <input value={company.name} onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)}
+    <label className="field wide suggest">
+      <span className="label">Firma nimi<b className="req" title="Kohustuslik"> *</b></span>
+      <input value={company.name} placeholder="Kirjuta firma nimi või registrikood, nt Telema" autoFocus={!company.name}
+        className={`search-input ${error ? "invalid" : ""}`} aria-invalid={!!error}
+        onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)}
         onChange={(e) => (setOpen(true), setMsg(""), onSave({ ...company, name: e.target.value }))} />
-      {open && hits.length > 0 && (
+      {open && (hits.length > 0 || searching) && (
         <ul className="suggestions">
+          {searching && hits.length === 0 && <li className="muted small pad">Otsin äriregistrist …</li>}
           {hits.map((h) => (
             <li key={h.regNumber}>
               <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => pick(h)}>
                 <b>{h.name}</b> <span className="muted">{h.regNumber}</span>
-                {h.status !== "R" && <span className="warn"> · {STATUS_LABELS[h.status] ?? h.status}</span>}
+                {h.status !== "R" && <span className="text-err"> · {STATUS_LABELS[h.status] ?? h.status}</span>}
                 <small>{h.address}</small>
               </button>
             </li>
           ))}
         </ul>
       )}
-      {msg && <small className="muted">{msg}</small>}
+      {msg ? <span className="hint ok-text">{msg}</span>
+        : error ? <span className="field-error">{error}</span>
+        : <span className="hint">Vähemalt 3 tähte – siis ilmuvad äriregistri vasted</span>}
     </label>
   );
 }
@@ -303,7 +376,7 @@ const OPERATORS: Record<string, string> = {
   billberry: "Billberry", telema: "Telema", finbite: "Finbite (Omniva)", unifiedpost: "Unifiedpost", "e-arveldaja": "e-arveldaja (RIK)",
 };
 
-function BillberryCard({ company, onSave }: { company: Company; onSave: (c: Company) => void }) {
+function BillberryStep({ company, onSave }: { company: Company; onSave: (c: Company) => void }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [kyc, setKyc] = useState(false);
@@ -323,50 +396,53 @@ function BillberryCard({ company, onSave }: { company: Company; onSave: (c: Comp
       onSave({ ...company, billberry });
       if (action === "register") setKyc(false);
     } catch (e) {
-      setMsg(`Viga: ${e instanceof Error ? e.message : e}`);
+      setMsg(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   }
 
-  const ready = s?.registered && s.creatingReceivedEnabled;
+  const registered = !!s?.registered && s.creatingReceivedEnabled;
+  const done = registered && !!s?.receivingOperator;
   return (
-    <section className="card">
-      <div className="card-head">
-        <strong>Billberry (ostuarved otse Booksi)</strong>
-        {s && <span className={`badge ${ready && s.receivingOperator ? "ok" : "err"}`}>
-          {!ready ? "Registreerimata" : s.receivingOperator ? "Valmis" : "E-arvete vastuvõtt puudub"}</span>}
-      </div>
-      {!company.regNumber ? (
-        <p className="muted small">Lisa firmale registrikood.</p>
+    <Step n={3} title="Ostuarvete saatmine otse Booksi (Billberry)" state={done ? "done" : "optional"}>
+      <p className="hint">
+        Valikuline. Ilma selleta saad arved alla laadida XML-failina ja Booksi käsitsi importida.
+        Billberryga lähevad ostuarved ühe nupuvajutusega Booksi registrisse <i>Tarnija e-arved</i>.
+      </p>
+      {!/^\d{8}$/.test(company.regNumber) ? (
+        <p className="callout">Täida enne samm 1 (registrikood).</p>
       ) : (
         <>
           {s && (
-            <p className="small">
-              E-arve operaator: <b>{s.receivingOperator ? (OPERATORS[s.receivingOperator] ?? s.receivingOperator) : "puudub"}</b>
-              <span className="muted"> · kontrollitud {new Date(s.checkedAt).toLocaleString("et-EE")}</span>
+            <dl className="facts">
+              <dt>Billberrys registreeritud</dt><dd>{registered ? "jah" : "ei"}</dd>
+              <dt>Firma e-arve operaator</dt>
+              <dd className={s.receivingOperator ? "" : "text-err"}>
+                {s.receivingOperator ? (OPERATORS[s.receivingOperator] ?? s.receivingOperator) : "puudub – firma ei võta e-arveid vastu"}
+              </dd>
+              <dt>Kontrollitud</dt><dd>{new Date(s.checkedAt).toLocaleString("et-EE")}</dd>
+            </dl>
+          )}
+          {registered && !s?.receivingOperator && (
+            <p className="callout err">
+              Firma ei võta e-arveid vastu. Lülita <b>Booksis</b> e-arvete vastuvõtt sisse (vali operaator), siis vajuta „Kontrolli olekut“.
             </p>
           )}
-          {s && ready && !s.receivingOperator && (
-            <p className="small warn">
-              Firma ei võta e-arveid vastu. Lülita Booksis e-arvete vastuvõtt sisse (vali operaator) ja kontrolli uuesti –
-              enne seda Billberry arveid edasi saata ei saa.
-            </p>
-          )}
-          {!ready && (
-            <label className="inline small">
+          {!registered && (
+            <label className="inline">
               <input type="checkbox" checked={kyc} onChange={(e) => setKyc(e.target.checked)} />
               Olen kontrollinud, et mul on õigus selle firma nimel tegutseda (esindusõigus e-äriregistris või volitus)
             </label>
           )}
           <div className="actions">
-            {!ready && <button disabled={busy || !kyc} onClick={() => run("register")}>Registreeri Billberrys</button>}
-            <button className="secondary" disabled={busy} onClick={() => run("status")}>Kontrolli olekut</button>
+            {!registered && <button disabled={busy || !kyc} onClick={() => run("register")}>Registreeri Billberrys</button>}
+            <button className="secondary" disabled={busy} onClick={() => run("status")}>{busy ? "Ootan Billberryt …" : "Kontrolli olekut"}</button>
           </div>
         </>
       )}
-      {msg && <p className="status">{msg}</p>}
-    </section>
+      {msg && <p className="callout err">{msg}</p>}
+    </Step>
   );
 }
 
@@ -374,32 +450,8 @@ function PasswordField() {
   const [value, setValue] = useState("");
   useEffect(() => setValue(store.password()), []);
   return (
-    <label className="field">
-      <span>WiseBilli parool (Billberry saatmiseks)</span>
-      <input type="password" value={value} onChange={(e) => (setValue(e.target.value), store.setPassword(e.target.value))} />
-    </label>
-  );
-}
-
-function Field({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
-  return (
-    <label className="field">
-      <span>{label}</span>
-      <input value={value} onChange={(e) => onChange(e.target.value)} />
-    </label>
-  );
-}
-
-function AccountSelect({ label, accounts, value, onChange }: {
-  label: string; accounts: Account[]; value: string; onChange: (v: string) => void;
-}) {
-  return (
-    <label className="field">
-      <span>{label}</span>
-      <select value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">—</option>
-        {accounts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
-      </select>
-    </label>
+    <Field label="WiseBilli parool" type="password" value={value}
+      hint="Vajalik Billberry kaudu saatmiseks. Sisestad ühe korra, brauser jätab meelde."
+      onChange={(v) => (setValue(v), store.setPassword(v))} />
   );
 }

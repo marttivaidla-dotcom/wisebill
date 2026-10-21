@@ -3,13 +3,15 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { Account, Company, Invoice, InvoiceDirection, InvoiceRow, Party, RegisterEntry } from "@/lib/types";
-import { recalcRow, totals, validate } from "@/lib/vat";
+import { invoiceIssues, recalcRow, totals, validate } from "@/lib/vat";
 import { buildEInvoiceXml } from "@/lib/export/earve";
 import { prepareForCompany, rememberMappings } from "@/lib/mapping";
 import { accountsFor } from "@/lib/accounts";
+import { companyIssues } from "@/lib/readiness";
 import { findDuplicate, toRegisterEntry, type DuplicateHit } from "@/lib/duplicates";
 import { store } from "@/lib/store";
 import { callBillberry, downloadFile, postFile } from "@/lib/upload";
+import { Field, Step } from "./ui";
 
 const VAT_RATES = [24, 22, 13, 9, 5, 0];
 const IMAGE_RE = /\.(png|jpe?g|webp|bmp|gif|tiff?)$/i;
@@ -32,6 +34,7 @@ export default function Home() {
   useEffect(() => setRegister(companyId ? store.register(companyId) : []), [companyId]);
 
   const company = companies.find((c) => c.id === companyId);
+  const companyMissing = company ? companyIssues(company).filter((i) => i.required) : [];
 
   function switchCompany(id: string) {
     if (invoices.length && !confirm("Firma vahetamisel eemaldatakse eelvaates olevad arved. Jätkan?")) return;
@@ -47,7 +50,7 @@ export default function Home() {
         let result: { invoices: Invoice[] };
         if (IMAGE_RE.test(file.name)) {
           // OCR jookseb brauseris (Tesseract.js) – serverless funktsioon jääb kergeks ja tasuta
-          setStatus(`OCR: ${file.name} …`);
+          setStatus(`Loen pildilt teksti: ${file.name} … (võib võtta kuni minuti)`);
           const { createWorker } = await import("tesseract.js");
           const worker = await createWorker(["est", "eng"]);
           const { data } = await worker.recognize(file);
@@ -75,7 +78,7 @@ export default function Home() {
   const update = (id: string, fn: (inv: Invoice) => Invoice) =>
     setInvoices((prev) => prev.map((i) => (i.id === id ? fn(i) : i)));
 
-  // Duplikaadid: registri (varem eksporditud + Booksist laetud) ja sama partii vastu
+  // Duplikaadid: registri (varem saadetud + Booksist laetud) ja sama partii vastu
   const duplicates = useMemo(
     () => new Map(invoices.map((inv) => [inv.id, findDuplicate(inv, register, invoices)])),
     [invoices, register],
@@ -98,7 +101,7 @@ export default function Home() {
     downloadFile(`books-earve-${company.regNumber || company.name}-${new Date().toISOString().slice(0, 10)}.xml`,
       buildEInvoiceXml(ready), "application/xml");
     finish(company, ready);
-    setStatus(`Eksporditud ${ready.length} arvet ja lisatud registrisse`);
+    setStatus(`✓ ${ready.length} arvet laaditi alla XML-failina. Impordi see Booksis: Ostuarved/Müügiarved → Funktsioonid → Impordid → E-arve.`);
   }
 
   // Ostuarved ükshaaval Billberrysse (üks arve päringu kohta), sealt firma e-arve operaatori kaudu Booksi
@@ -106,7 +109,7 @@ export default function Home() {
     if (!company) return;
     const sent: Invoice[] = [];
     for (const [n, inv] of ready.entries()) {
-      setStatus(`Saadan Billberrysse ${n + 1}/${ready.length}: ${inv.number} …`);
+      setStatus(`Saadan Billberrysse ${n + 1}/${ready.length}: arve ${inv.number} …`);
       try {
         await callBillberry({ action: "upload", xml: buildEInvoiceXml([inv]) });
         sent.push(inv);
@@ -116,7 +119,8 @@ export default function Home() {
     }
     finish(company, sent);
     const failed = ready.length - sent.length;
-    setStatus(`Saadetud ${sent.length} arvet Booksi (Tarnija e-arved)` + (failed ? ` · ${failed} ebaõnnestus, vaata arvete juurest` : ""));
+    setStatus(`✓ ${sent.length} arvet saadetud Booksi (Ostuarved → Registrid → Tarnija e-arved)` +
+      (failed ? ` · ${failed} ebaõnnestus – põhjus on arve juures punasega` : ""));
   }
   const billberryReady = direction === "purchase" && !!company?.billberry?.registered &&
     !!company.billberry.creatingReceivedEnabled && !!company.billberry.receivingOperator;
@@ -124,9 +128,10 @@ export default function Home() {
   if (!companies.length)
     return (
       <main>
-        <h1>WiseBill</h1>
-        <section className="card">
-          Alusta firma lisamisest: <Link href="/firmad">Firmad ja kontoplaanid →</Link>
+        <section className="card empty">
+          <h1>Tere tulemast WiseBilli</h1>
+          <p className="muted">Alusta firma lisamisest – siis saad selle arveid Booksi viia.</p>
+          <Link className="button" href="/firmad">+ Lisa esimene firma</Link>
         </section>
       </main>
     );
@@ -135,60 +140,76 @@ export default function Home() {
     <main>
       <header className="page-head">
         <div>
-          <h1>WiseBill</h1>
-          <p className="muted">Algdokumendid → Excellent Books e-arve XML</p>
+          <h1>Arvete import</h1>
+          <p className="muted">Lae üles PDF-, Exceli-, CSV- või pildifailid, kontrolli andmeid ja saada Booksi.</p>
         </div>
-        <Link href="/firmad">Firmad ja kontoplaanid →</Link>
       </header>
 
-      <div className="toolbar">
-        <label>
-          Firma:{" "}
-          <select value={companyId} onChange={(e) => switchCompany(e.target.value)}>
-            {companies.map((c) => <option key={c.id} value={c.id}>{c.name} {c.regNumber && `(${c.regNumber})`}</option>)}
-          </select>
-        </label>
-        <label>
-          Arve tüüp:{" "}
-          <select value={direction} onChange={(e) => setDirection(e.target.value as InvoiceDirection)}>
-            <option value="purchase">Ostuarve (hankija arve)</option>
-            <option value="sales">Müügiarve</option>
-          </select>
-        </label>
-        {company && !company.accounts.length && (
-          <span className="warn">Firmal pole kontoplaani – <Link href="/firmad">lisa see</Link></span>
+      <Step n={1} title="Vali firma ja arvete tüüp" state={company && !companyMissing.length ? "done" : "todo"}>
+        <div className="form-grid">
+          <label className="field">
+            <span className="label">Firma, kelle arved need on<b className="req"> *</b></span>
+            <select value={companyId} onChange={(e) => switchCompany(e.target.value)}>
+              {companies.map((c) => <option key={c.id} value={c.id}>{c.name || "(nimi puudub)"} {c.regNumber && `(${c.regNumber})`}</option>)}
+            </select>
+          </label>
+          <label className="field">
+            <span className="label">Arvete tüüp<b className="req"> *</b></span>
+            <select value={direction} onChange={(e) => setDirection(e.target.value as InvoiceDirection)}>
+              <option value="purchase">Ostuarved – hankijatelt saadud arved</option>
+              <option value="sales">Müügiarved – firma enda väljastatud arved</option>
+            </select>
+          </label>
+        </div>
+        {companyMissing.length > 0 && (
+          <div className="callout err">
+            <b>Selle firma seadistus on pooleli:</b> {companyMissing.map((i) => i.message.toLowerCase()).join(", ")}.{" "}
+            <Link href="/firmad">Täida firma andmed →</Link>
+          </div>
         )}
-      </div>
+      </Step>
 
-      <label
-        className={`drop ${dragOver ? "over" : ""}`}
-        onDragOver={(e) => (e.preventDefault(), setDragOver(true))}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => (e.preventDefault(), setDragOver(false), handleFiles(e.dataTransfer.files))}
-      >
-        <input type="file" multiple hidden accept=".pdf,.xlsx,.xls,.csv,.ods,image/*"
-          onChange={(e) => (e.target.files && handleFiles(e.target.files), (e.target.value = ""))} />
-        Lohista siia PDF, Excel, CSV või pilt — või klõpsa faili valimiseks
-      </label>
-      {status && <p className="status">{status}</p>}
+      <Step n={2} title="Lae dokumendid üles" state={invoices.length ? "done" : "todo"}>
+        <label
+          className={`drop ${dragOver ? "over" : ""} ${companyMissing.length ? "disabled" : ""}`}
+          onDragOver={(e) => (e.preventDefault(), setDragOver(true))}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => (e.preventDefault(), setDragOver(false), !companyMissing.length && handleFiles(e.dataTransfer.files))}
+        >
+          <input type="file" multiple hidden accept=".pdf,.xlsx,.xls,.csv,.ods,image/*" disabled={companyMissing.length > 0}
+            onChange={(e) => (e.target.files && handleFiles(e.target.files), (e.target.value = ""))} />
+          <b>Lohista failid siia või klõpsa siin</b>
+          <span>PDF, Excel, CSV või pilt (foto/skaneering). Mitu faili korraga on lubatud.</span>
+          {companyMissing.length > 0 && <span className="text-err">Täida enne firma andmed (samm 1).</span>}
+        </label>
+        {status && <p className={`status-box ${status.startsWith("Viga") ? "err" : ""}`}>{status}</p>}
+      </Step>
 
-      {company && invoices.map((inv) => (
-        <InvoiceCard key={inv.id} inv={inv} company={company} duplicate={duplicates.get(inv.id) ?? null}
-          onChange={(fn) => update(inv.id, fn)}
-          onRemove={() => setInvoices((p) => p.filter((i) => i.id !== inv.id))} />
-      ))}
+      {invoices.length > 0 && company && (
+        <Step n={3} title={`Kontrolli arved (${ready.length}/${invoices.length} valmis)`} state={ready.length === invoices.length ? "done" : "todo"}>
+          <p className="hint">Punasega märgitud väljad tuleb täita. Summad arvutatakse ise koguse, hinna ja KM määra järgi.</p>
+          {invoices.map((inv) => (
+            <InvoiceCard key={inv.id} inv={inv} company={company} duplicate={duplicates.get(inv.id) ?? null}
+              onChange={(fn) => update(inv.id, fn)}
+              onRemove={() => setInvoices((p) => p.filter((i) => i.id !== inv.id))} />
+          ))}
+        </Step>
+      )}
 
       {invoices.length > 0 && (
         <div className="footer">
-          <span>{ready.length} / {invoices.length} arvet valmis eksportimiseks</span>
+          <span>
+            <b>{ready.length}</b> / {invoices.length} arvet valmis
+            {ready.length < invoices.length && <span className="text-err"> · {invoices.length - ready.length} vajab parandamist</span>}
+          </span>
           {direction === "purchase" && (
             <button disabled={ready.length === 0 || !billberryReady} onClick={sendToBillberry}
-              title={billberryReady ? "Billberry kaudu Booksi registrisse Tarnija e-arved" : "Firma pole Billberrys valmis – vaata lehte Firmad"}>
-              Saada Booksi (Billberry)
+              title={billberryReady ? "Billberry kaudu Booksi registrisse Tarnija e-arved" : "Billberry pole selle firma jaoks seadistatud – vaata Firmad → samm 3"}>
+              Saada Booksi
             </button>
           )}
-          <button className={direction === "purchase" ? "secondary" : ""} disabled={ready.length === 0} onClick={exportXml}>
-            Laadi alla Books XML
+          <button className={direction === "purchase" && billberryReady ? "secondary" : ""} disabled={ready.length === 0} onClick={exportXml}>
+            Laadi alla XML-fail
           </button>
         </div>
       )}
@@ -201,27 +222,32 @@ function InvoiceCard({ inv, company, duplicate, onChange, onRemove }: {
   onChange: (fn: (i: Invoice) => Invoice) => void; onRemove: () => void;
 }) {
   const t = totals(inv);
-  const errors = validate(inv, company);
+  const issues = invoiceIssues(inv, company);
+  const err = (field: string) => issues.find((i) => i.field === field)?.message;
+  const bad = (field: string) => (issues.some((i) => i.field === field) ? "invalid" : "");
   const blocked = duplicate?.level === "kindel" && !inv.allowDuplicate;
   const set = <K extends keyof Invoice>(k: K, v: Invoice[K]) => onChange((i) => ({ ...i, [k]: v }));
   const setParty = (which: "seller" | "buyer", k: keyof Party, v: string) =>
     onChange((i) => ({ ...i, [which]: { ...i[which], [k]: v } }));
   const setRow = (idx: number, patch: Partial<InvoiceRow>) =>
     onChange((i) => ({ ...i, rows: i.rows.map((r, j) => (j === idx ? recalcRow({ ...r, ...patch }) : r)) }));
-  const counterparty = inv.direction === "sales" ? "buyer" : "seller";
-  const own = counterparty === "buyer" ? "seller" : "buyer";
+  const cp = inv.direction === "sales" ? "buyer" : "seller";
+  const own = cp === "buyer" ? "seller" : "buyer";
   const rowAccounts: Account[] = accountsFor(company.accounts, inv.direction);
   const listId = `acc-${inv.id}`;
+  const ok = issues.length === 0 && !blocked;
 
   return (
-    <section className={`card ${blocked ? "dup" : ""}`}>
+    <section className={`invoice ${ok ? "ok" : "bad"}`}>
       <div className="card-head">
-        <strong>{inv.source}</strong>
+        <strong title={inv.source}>📄 {inv.source}</strong>
         {duplicate && <span className={`badge ${duplicate.level === "kindel" ? "err" : "warn"}`}>
           {duplicate.level === "kindel" ? "Duplikaat" : "Võimalik duplikaat"}</span>}
-        <span className={errors.length || blocked ? "badge err" : "badge ok"}>{errors.length || blocked ? "Vajab parandust" : "Valmis"}</span>
-        <button className="link" onClick={onRemove}>Eemalda</button>
+        <span className={ok ? "badge ok" : "badge err"}>{ok ? "✓ Valmis" : `${issues.length + (blocked ? 1 : 0)} viga`}</span>
+        <button className="link danger" onClick={onRemove}>Eemalda</button>
       </div>
+
+      {inv.sendError && <p className="callout err"><b>Saatmine ebaõnnestus:</b> {inv.sendError}</p>}
 
       {duplicate && (
         <div className={`dup-box ${duplicate.level === "kindel" ? "err" : "warn"}`}>
@@ -235,46 +261,62 @@ function InvoiceCard({ inv, company, duplicate, onChange, onRemove }: {
         </div>
       )}
 
-      <div className="grid">
-        <Field label="Arve nr" value={inv.number} onChange={(v) => set("number", v)} />
-        <Field label="Kuupäev" type="date" value={inv.date} onChange={(v) => set("date", v)} />
-        <Field label="Maksetähtaeg" type="date" value={inv.dueDate} onChange={(v) => set("dueDate", v)} />
+      <h3>Arve andmed</h3>
+      <div className="form-grid four">
+        <Field label="Arve number" required value={inv.number} error={err("number")} onChange={(v) => set("number", v)} />
+        <Field label="Arve kuupäev" required type="date" value={inv.date} error={err("date")} onChange={(v) => set("date", v)} />
+        <Field label="Maksetähtaeg" required type="date" value={inv.dueDate} error={err("dueDate")} onChange={(v) => set("dueDate", v)} />
         <Field label="Viitenumber" value={inv.referenceNumber ?? ""} onChange={(v) => set("referenceNumber", v.replace(/\D/g, ""))} />
       </div>
-      <div className="grid parties">
-        <fieldset>
-          <legend>{counterparty === "seller" ? "Hankija (müüja)" : "Klient (ostja)"}</legend>
-          <Field label="Nimi" value={inv[counterparty].name} onChange={(v) => setParty(counterparty, "name", v)} />
-          <Field label="Registrikood" value={inv[counterparty].regNumber} onChange={(v) => setParty(counterparty, "regNumber", v)} />
-          <Field label="KMKR" value={inv[counterparty].vatNumber ?? ""} onChange={(v) => setParty(counterparty, "vatNumber", v)} />
-          {counterparty === "seller" && <Field label="IBAN" value={inv.seller.iban ?? ""} onChange={(v) => setParty("seller", "iban", v)} />}
-          <Field label={`Booksi ${counterparty === "buyer" ? "kliendi" : "hankija"} kood`} value={inv[counterparty].code ?? ""}
-            onChange={(v) => setParty(counterparty, "code", v)} />
-        </fieldset>
-        <fieldset className="own">
-          <legend>{own === "buyer" ? "Ostja" : "Müüja"} (valitud firma)</legend>
-          <div>{inv[own].name}</div>
+
+      <div className="parties">
+        <div>
+          <h3>{cp === "seller" ? "Hankija (kellelt ostsite)" : "Klient (kellele müüsite)"}</h3>
+          <div className="form-grid">
+            <Field label="Nimi" required value={inv[cp].name} error={err(`${cp}.name`)} onChange={(v) => setParty(cp, "name", v)} />
+            <Field label="Registrikood" required value={inv[cp].regNumber} error={err(`${cp}.regNumber`)}
+              hint="Või täida Booksi kood" onChange={(v) => setParty(cp, "regNumber", v)} />
+            <Field label="KMKR number" value={inv[cp].vatNumber ?? ""} onChange={(v) => setParty(cp, "vatNumber", v)} />
+            {cp === "seller" && <Field label="Hankija IBAN" value={inv.seller.iban ?? ""} onChange={(v) => setParty("seller", "iban", v)} />}
+            <Field label={`Booksi ${cp === "buyer" ? "kliendi" : "hankija"} kood`} value={inv[cp].code ?? ""}
+              hint="Kui Booksis on kood olemas" onChange={(v) => setParty(cp, "code", v)} />
+          </div>
+        </div>
+        <div className="own">
+          <h3>{own === "buyer" ? "Ostja" : "Müüja"} (sinu firma)</h3>
+          <div><b>{inv[own].name}</b></div>
           <div className="muted small">{inv[own].regNumber} {inv[own].vatNumber}</div>
-        </fieldset>
+          <p className="hint">Täidetakse firma andmetest automaatselt.</p>
+        </div>
       </div>
 
+      <h3>Arve read</h3>
       <datalist id={listId}>
         {rowAccounts.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
       </datalist>
+      {err("rows") && <p className="field-error">{err("rows")}</p>}
       <div className="table-wrap">
-        <table>
+        <table className="rows">
           <thead>
-            <tr><th>Artikkel</th><th>Konto</th><th>Kirjeldus</th><th>Kogus</th><th>Ühik</th><th>Hind</th><th>KM %</th><th>Neto</th><th>KM</th><th>Kokku</th><th></th></tr>
+            <tr>
+              <th>Kirjeldus *</th>
+              <th>{inv.direction === "purchase" ? "Kulukonto *" : "Tulukonto"}</th>
+              <th>Artikkel{inv.direction === "sales" ? " *" : ""}</th>
+              <th>Kogus</th><th>Ühik</th><th>Hind (ilma KM)</th><th>KM %</th>
+              <th className="num">Neto</th><th className="num">KM</th><th className="num">Kokku</th><th></th>
+            </tr>
           </thead>
           <tbody>
             {inv.rows.map((r, i) => (
               <tr key={i}>
-                <td><input value={r.articleCode} onChange={(e) => setRow(i, { articleCode: e.target.value })} /></td>
+                <td><input value={r.description} className={bad(`row.${i}.description`)} placeholder="Mida osteti"
+                  onChange={(e) => setRow(i, { description: e.target.value })} /></td>
                 <td>
-                  <input list={listId} value={r.account} onChange={(e) => setRow(i, { account: e.target.value.trim() })}
-                    title={company.accounts.find((a) => a.code === r.account)?.name ?? ""} />
+                  <input list={listId} value={r.account} className={bad(`row.${i}.account`)} placeholder="nt 5000"
+                    onChange={(e) => setRow(i, { account: e.target.value.trim() })}
+                    title={err(`row.${i}.account`) ?? company.accounts.find((a) => a.code === r.account)?.name ?? ""} />
                 </td>
-                <td><input value={r.description} onChange={(e) => setRow(i, { description: e.target.value })} /></td>
+                <td><input value={r.articleCode} className={bad(`row.${i}.articleCode`)} onChange={(e) => setRow(i, { articleCode: e.target.value })} /></td>
                 <td><input type="number" step="any" value={r.quantity} onChange={(e) => setRow(i, { quantity: +e.target.value })} /></td>
                 <td><input value={r.unit} onChange={(e) => setRow(i, { unit: e.target.value })} /></td>
                 <td><input type="number" step="0.01" value={r.unitPrice} onChange={(e) => setRow(i, { unitPrice: +e.target.value })} /></td>
@@ -286,7 +328,7 @@ function InvoiceCard({ inv, company, duplicate, onChange, onRemove }: {
                 <td className="num">{r.net.toFixed(2)}</td>
                 <td className="num">{r.vat.toFixed(2)}</td>
                 <td className="num">{r.gross.toFixed(2)}</td>
-                <td><button className="link" onClick={() => onChange((x) => ({ ...x, rows: x.rows.filter((_, j) => j !== i) }))}>×</button></td>
+                <td><button className="link danger" title="Kustuta rida" onClick={() => onChange((x) => ({ ...x, rows: x.rows.filter((_, j) => j !== i) }))}>×</button></td>
               </tr>
             ))}
           </tbody>
@@ -299,28 +341,16 @@ function InvoiceCard({ inv, company, duplicate, onChange, onRemove }: {
       </button>
 
       <div className="totals">
-        {t.byRate.map((g) => <div key={g.rate}>KM {g.rate}%: {g.net.toFixed(2)} → {g.vat.toFixed(2)}</div>)}
-        <div>Neto: <b>{t.net.toFixed(2)}</b> · KM: <b>{t.vat.toFixed(2)}</b> · Kokku: <b>{t.gross.toFixed(2)} {inv.currency}</b></div>
+        {t.byRate.map((g) => <div key={g.rate} className="muted">KM {g.rate}%: {g.net.toFixed(2)} → {g.vat.toFixed(2)}</div>)}
+        <div>Neto <b>{t.net.toFixed(2)}</b> · KM <b>{t.vat.toFixed(2)}</b> · Kokku <b className="big">{t.gross.toFixed(2)} {inv.currency}</b></div>
       </div>
 
-      {(errors.length > 0 || inv.warnings.length > 0 || inv.sendError) && (
+      {(issues.length > 0 || inv.warnings.length > 0) && (
         <ul className="issues">
-          {inv.sendError && <li className="err">Billberry: {inv.sendError}</li>}
-          {errors.map((e) => <li key={e} className="err">{e}</li>)}
-          {inv.warnings.map((w) => <li key={w} className="warn">{w}</li>)}
+          {issues.map((e) => <li key={e.field + e.message} className="err">{e.message}</li>)}
+          {inv.warnings.map((w) => <li key={w} className="warn">Kontrolli: {w}</li>)}
         </ul>
       )}
     </section>
-  );
-}
-
-function Field({ label, value, onChange, type = "text" }: {
-  label: string; value: string; onChange: (v: string) => void; type?: string;
-}) {
-  return (
-    <label className="field">
-      <span>{label}</span>
-      <input type={type} value={value} onChange={(e) => onChange(e.target.value)} />
-    </label>
   );
 }

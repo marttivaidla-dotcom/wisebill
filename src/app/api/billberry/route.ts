@@ -23,7 +23,10 @@ export async function POST(req: Request) {
 
   const cfg = configFromEnv();
   if (!cfg)
-    return NextResponse.json({ error: "Billberry pole seadistatud (BILLBERRY_PARTNER_ID, BILLBERRY_KEY_ID, BILLBERRY_KEY)" }, { status: 503 });
+    return NextResponse.json({
+      error: "Billberry ühendus pole veel seadistatud – serveris puuduvad Billberry partneri võtmed " +
+        "(BILLBERRY_PARTNER_ID, BILLBERRY_KEY_ID, BILLBERRY_KEY). Seni kasuta arvete jaoks XML-faili allalaadimist.",
+    }, { status: 503 });
   const bb = new Billberry(cfg);
 
   try {

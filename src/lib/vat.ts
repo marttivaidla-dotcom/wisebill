@@ -25,30 +25,40 @@ export function totals(inv: Invoice): InvoiceTotals {
   return { net, vat, gross: round2(net + vat), byRate };
 }
 
+/** Üks puudus arvel: field = välja võti eelvaates (punaseks märkimiseks), message = selgitus. */
+export interface Issue {
+  field: string; // "number" | "date" | "dueDate" | "seller.name" | "buyer.regNumber" | "rows" | "row.0.account" ...
+  message: string;
+}
+
 /**
- * Kontrollid enne eksporti. Tagastab vigade loetelu (tühi = korras).
+ * Kontrollid enne eksporti, väljade kaupa.
  * Kui firma on antud, kontrollitakse ridade kontosid selle firma kontoplaani vastu.
  */
-export function validate(inv: Invoice, company?: Company): string[] {
-  const errs: string[] = [];
-  if (!inv.number.trim()) errs.push("Arve number puudub");
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(inv.date)) errs.push("Arve kuupäev puudub või vale formaat");
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(inv.dueDate)) errs.push("Maksetähtaeg puudub või vale formaat");
-  if (!inv.seller.name.trim()) errs.push("Müüja nimi puudub");
-  if (!inv.buyer.name.trim()) errs.push("Ostja nimi puudub");
+export function invoiceIssues(inv: Invoice, company?: Company): Issue[] {
+  const out: Issue[] = [];
+  const add = (field: string, message: string) => out.push({ field, message });
+  if (!inv.number.trim()) add("number", "Arve number puudub");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(inv.date)) add("date", "Arve kuupäev puudub või vale formaat");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(inv.dueDate)) add("dueDate", "Maksetähtaeg puudub või vale formaat");
+  if (!inv.seller.name.trim()) add("seller.name", "Müüja nimi puudub");
+  if (!inv.buyer.name.trim()) add("buyer.name", "Ostja nimi puudub");
   // Booksi vastendus: müügiarvel klient, ostuarvel hankija peab olema tuvastatav
-  const counterparty = inv.direction === "sales" ? inv.buyer : inv.seller;
-  if (!counterparty.regNumber.trim() && !counterparty.code?.trim())
-    errs.push(`${inv.direction === "sales" ? "Kliendi" : "Hankija"} registrikood või Booksi kood puudub`);
-  if (inv.rows.length === 0) errs.push("Arvel pole ridu");
+  const cp = inv.direction === "sales" ? "buyer" : "seller";
+  if (!inv[cp].regNumber.trim() && !inv[cp].code?.trim())
+    add(`${cp}.regNumber`, `${cp === "buyer" ? "Kliendi" : "Hankija"} registrikood või Booksi kood puudub`);
+  if (inv.rows.length === 0) add("rows", "Arvel pole ridu");
   inv.rows.forEach((r, i) => {
-    if (!r.description.trim()) errs.push(`Rida ${i + 1}: kirjeldus puudub`);
+    if (!r.description.trim()) add(`row.${i}.description`, `Rida ${i + 1}: kirjeldus puudub`);
     if (inv.direction === "sales" && !r.articleCode.trim())
-      errs.push(`Rida ${i + 1}: Booksi artikli kood puudub`);
+      add(`row.${i}.articleCode`, `Rida ${i + 1}: Booksi artikli kood puudub`);
     if (inv.direction === "purchase" && !r.articleCode.trim() && !r.account.trim())
-      errs.push(`Rida ${i + 1}: kulukonto (või artikkel) puudub`);
+      add(`row.${i}.account`, `Rida ${i + 1}: kulukonto (või artikkel) puudub`);
     if (company && r.account.trim() && !company.accounts.some((a) => a.code === r.account.trim()))
-      errs.push(`Rida ${i + 1}: konto ${r.account} puudub firma "${company.name}" kontoplaanis`);
+      add(`row.${i}.account`, `Rida ${i + 1}: konto ${r.account} puudub firma "${company.name}" kontoplaanis`);
   });
-  return errs;
+  return out;
 }
+
+/** Vigade loetelu (tühi = korras). */
+export const validate = (inv: Invoice, company?: Company): string[] => invoiceIssues(inv, company).map((i) => i.message);
