@@ -3,10 +3,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { supabase } from "@/lib/supabase/client";
+import { useMe } from "./auth";
 
-/** Ülemine menüü – samad lingid igal lehel. */
+/** Ülemine menüü – samad lingid igal lehel, paremal kasutaja. */
 export function Nav() {
   const path = usePathname();
+  const me = useMe();
+  if (!me) return null;
   const item = (href: string, label: string) => (
     <Link href={href} className={path === href ? "active" : ""}>{label}</Link>
   );
@@ -15,6 +19,11 @@ export function Nav() {
       <span className="brand">WiseBill</span>
       {item("/firmad", "Firmad")}
       {item("/", "Arvete import")}
+      {me.isAdmin && item("/kasutajad", "Kasutajad")}
+      <span className="nav-right">
+        {item("/konto", me.email)}
+        <button className="link" onClick={() => supabase().auth.signOut()}>Logi välja</button>
+      </span>
     </nav>
   );
 }

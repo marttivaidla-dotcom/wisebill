@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireUser } from "@/lib/supabase/server";
 import { parseAccounts, parseRegister, parseSpreadsheet } from "@/lib/parsers/spreadsheet";
 import { parseInvoiceText } from "@/lib/parsers/text";
 import type { Invoice, InvoiceDirection } from "@/lib/types";
@@ -16,6 +17,8 @@ const MAX_BYTES = 4 * 1024 * 1024;
  *  - kind: "invoice" (vaikimisi) | "accounts" (kontoplaan) | "register" (Booksi arvete nimekiri)
  */
 export async function POST(req: Request) {
+  const auth = await requireUser();
+  if (auth instanceof NextResponse) return auth;
   try {
     const form = await req.formData();
     const direction: InvoiceDirection = form.get("direction") === "purchase" ? "purchase" : "sales";

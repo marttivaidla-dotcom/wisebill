@@ -1,32 +1,46 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Account, AccountType, BillberrySettings, Company, InvoiceDirection, RegisterEntry } from "@/lib/types";
 import { STATUS_LABELS, type RegistryCompany, type RegistryDetails } from "@/lib/ariregister";
 import { TEMPLATE_ACCOUNTS, accountsFor } from "@/lib/accounts";
 import { companyIssues } from "@/lib/readiness";
-import { store } from "@/lib/store";
-import { callBillberry, downloadFile, newId, postFile } from "@/lib/upload";
+import { clearLegacyBrowserData, legacyBrowserData, store, type Member, type Profile } from "@/lib/store";
+import { callBillberry, downloadFile, postFile } from "@/lib/upload";
+import { useMe } from "../auth";
 import { Field, Select, Step } from "../ui";
 
 const TYPES: AccountType[] = ["vara", "kohustus", "omakapital", "tulu", "kulu"];
+const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export default function CompaniesPage() {
-  const [companies, setCompanies] = useState<Company[]>([]);
+  const [companies, setCompanies] = useState<Company[] | null>(null);
   const [selectedId, setSelectedId] = useState("");
   const [status, setStatus] = useState("");
+  const [saveState, setSaveState] = useState<"" | "saving" | "saved" | "error">("");
+  const [legacy, setLegacy] = useState(0);
+  const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
-  const reload = () => setCompanies(store.companies());
+  const reload = () => store.companies().then(setCompanies).catch((e) => setStatus(`Viga: ${errText(e)}`));
   useEffect(() => {
     reload();
     setSelectedId(store.activeCompanyId());
+    setLegacy(legacyBrowserData()?.companies.length ?? 0);
   }, []);
 
-  const selected = companies.find((c) => c.id === selectedId);
+  const list = companies ?? [];
+  const selected = list.find((c) => c.id === selectedId);
 
+  // Muudatus kohe ekraanile, andmebaasi 600 ms pärast viimast klahvivajutust (mitte iga tähega)
   function save(c: Company) {
-    store.saveCompany(c);
-    reload();
+    setCompanies((prev) => (prev ?? []).map((x) => (x.id === c.id ? c : x)));
+    setSaveState("saving");
+    clearTimeout(timers.current.get(c.id));
+    timers.current.set(c.id, setTimeout(() => {
+      store.saveCompany(c)
+        .then(() => setSaveState("saved"))
+        .catch((e) => (setSaveState("error"), setStatus(`Salvestamine ebaõnnestus: ${errText(e)}`)));
+    }, 600));
   }
 
   function select(id: string) {
@@ -34,20 +48,45 @@ export default function CompaniesPage() {
     store.setActiveCompanyId(id);
   }
 
-  function addCompany() {
-    const c: Company = { id: newId(), name: "", regNumber: "", accounts: [] };
-    save(c);
-    select(c.id);
+  async function addCompany() {
+    try {
+      const c = await store.createCompany();
+      setCompanies((prev) => [...(prev ?? []), c]);
+      select(c.id);
+    } catch (e) {
+      setStatus(`Viga: ${errText(e)}`);
+    }
   }
 
   async function restore(file: File) {
     try {
-      store.importAll(JSON.parse(await file.text()));
-      reload();
-      setStatus("Varukoopia taastatud");
+      setStatus("Taastan …");
+      const n = await store.importAll(JSON.parse(await file.text()));
+      await reload();
+      setStatus(`Varukoopiast lisatud ${n} firmat`);
     } catch (e) {
-      setStatus(`Viga: ${e instanceof Error ? e.message : e}`);
+      setStatus(`Viga: ${errText(e)}`);
     }
+  }
+
+  async function migrateLegacy() {
+    const data = legacyBrowserData();
+    if (!data) return;
+    try {
+      setStatus("Toon firmad üle …");
+      const n = await store.importAll(data);
+      clearLegacyBrowserData();
+      setLegacy(0);
+      await reload();
+      setStatus(`✓ ${n} firmat on nüüd sinu kontol`);
+    } catch (e) {
+      setStatus(`Viga: ${errText(e)}`);
+    }
+  }
+
+  async function exportBackup() {
+    const data = await store.exportAll();
+    downloadFile(`wisebill-varukoopia-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(data, null, 2), "application/json");
   }
 
   return (
@@ -55,16 +94,27 @@ export default function CompaniesPage() {
       <header className="page-head">
         <div>
           <h1>Firmad</h1>
-          <p className="muted">Lisa iga firma, kelle arveid Booksi viid. Iga firma = eraldi Booksi andmebaas.</p>
+          <p className="muted">Lisa iga firma, kelle arveid Booksi viid. Firmat saab jagada teiste WiseBilli kasutajatega.</p>
         </div>
+        <span className={`save-state ${saveState}`}>
+          {saveState === "saving" ? "Salvestan …" : saveState === "saved" ? "✓ Salvestatud" : saveState === "error" ? "Salvestamine ebaõnnestus" : ""}
+        </span>
       </header>
+
+      {legacy > 0 && (
+        <div className="callout">
+          <b>Selles brauseris on {legacy} firmat ajast enne kasutajakontosid.</b> Too need oma kontole, siis näed neid igas arvutis.
+          <div className="actions"><button onClick={migrateLegacy}>Too firmad minu kontole</button></div>
+        </div>
+      )}
 
       <div className="split">
         <aside className="stack">
           <section className="card">
-            <h2 className="side-title">Sinu firmad</h2>
-            {companies.length === 0 && <p className="muted small">Firmasid pole veel. Alusta nupust allpool.</p>}
-            {companies.map((c) => {
+            <h2 className="side-title">Minu firmad</h2>
+            {companies === null && <p className="muted small">Laen …</p>}
+            {companies?.length === 0 && <p className="muted small">Firmasid pole veel. Alusta nupust allpool.</p>}
+            {list.map((c) => {
               const missing = companyIssues(c).filter((i) => i.required).length;
               return (
                 <button key={c.id} className={`list-item ${c.id === selectedId ? "active" : ""}`} onClick={() => select(c.id)}>
@@ -80,31 +130,32 @@ export default function CompaniesPage() {
           </section>
 
           <section className="card">
-            <h2 className="side-title">Seaded</h2>
-            <p className="hint">Andmed on ainult selles brauseris. Tee aeg-ajalt varukoopia.</p>
+            <h2 className="side-title">Varukoopia</h2>
+            <p className="hint">Andmed on serveris. Varukoopia on JSON-fail sinu firmadest.</p>
             <div className="actions">
-              <button className="secondary" onClick={() =>
-                downloadFile(`wisebill-varukoopia-${new Date().toISOString().slice(0, 10)}.json`,
-                  JSON.stringify(store.exportAll(), null, 2), "application/json")}>
-                Salvesta varukoopia
-              </button>
+              <button className="secondary" onClick={exportBackup}>Salvesta varukoopia</button>
               <label className="button secondary">
                 Taasta varukoopiast
                 <input type="file" accept=".json" hidden onChange={(e) => e.target.files?.[0] && restore(e.target.files[0])} />
               </label>
             </div>
-            {status && <p className="status">{status}</p>}
           </section>
+          {status && <p className="status">{status}</p>}
         </aside>
 
         {selected ? (
-          <CompanyEditor key={selected.id} company={selected} others={companies.filter((c) => c.id !== selected.id)}
+          <CompanyEditor key={selected.id} company={selected} others={list.filter((c) => c.id !== selected.id)}
             onSave={save}
-            onDelete={() => {
-              if (!confirm(`Kustuta "${selected.name || "nimeta firma"}" koos kontoplaani ja arvete registriga?`)) return;
-              store.deleteCompany(selected.id);
-              setSelectedId("");
-              reload();
+            onLeft={() => (setSelectedId(""), reload())}
+            onDelete={async () => {
+              if (!confirm(`Kustuta "${selected.name || "nimeta firma"}" koos kontoplaani ja arvete registriga? Firma kaob ka kõigilt teistelt liikmetelt.`)) return;
+              try {
+                await store.deleteCompany(selected.id);
+                setSelectedId("");
+                await reload();
+              } catch (e) {
+                setStatus(`Viga: ${errText(e)}`);
+              }
             }} />
         ) : (
           <section className="card empty">
@@ -118,13 +169,14 @@ export default function CompaniesPage() {
   );
 }
 
-function CompanyEditor({ company, others, onSave, onDelete }: {
-  company: Company; others: Company[]; onSave: (c: Company) => void; onDelete: () => void;
+function CompanyEditor({ company, others, onSave, onDelete, onLeft }: {
+  company: Company; others: Company[]; onSave: (c: Company) => void; onDelete: () => void; onLeft: () => void;
 }) {
   const [filter, setFilter] = useState("");
   const [msg, setMsg] = useState("");
   const [register, setRegister] = useState<RegisterEntry[]>([]);
-  useEffect(() => setRegister(store.register(company.id)), [company.id]);
+  const reloadRegister = () => store.register(company.id).then(setRegister).catch((e) => setMsg(`Viga: ${errText(e)}`));
+  useEffect(() => void reloadRegister(), [company.id]);
 
   const issues = companyIssues(company);
   const err = (field: string) => issues.find((i) => i.field === field)?.message;
@@ -149,18 +201,18 @@ function CompanyEditor({ company, others, onSave, onDelete }: {
       const { accounts } = await postFile<{ accounts: Account[] }>(file, { kind: "accounts" });
       replaceAccounts(accounts, `Imporditud ${file.name}`);
     } catch (e) {
-      setMsg(`Viga: ${e instanceof Error ? e.message : e}`);
+      setMsg(`Viga: ${errText(e)}`);
     }
   }
 
   async function importRegister(file: File, direction: InvoiceDirection) {
     try {
       const { entries } = await postFile<{ entries: RegisterEntry[] }>(file, { kind: "register", direction });
-      store.addToRegister(company.id, entries);
-      setRegister(store.register(company.id));
+      await store.addToRegister(company.id, entries);
+      await reloadRegister();
       setMsg(`Booksi registrist lisatud ${entries.length} arvet`);
     } catch (e) {
-      setMsg(`Viga: ${e instanceof Error ? e.message : e}`);
+      setMsg(`Viga: ${errText(e)}`);
     }
   }
 
@@ -283,18 +335,86 @@ function CompanyEditor({ company, others, onSave, onDelete }: {
             Lae Booksi müügiarvete nimekiri
             <input type="file" hidden accept=".xlsx,.xls,.csv,.ods" onChange={(e) => e.target.files?.[0] && importRegister(e.target.files[0], "sales")} />
           </label>
-          <button className="link danger" onClick={() => {
+          <button className="link danger" onClick={async () => {
             if (!confirm("Eemalda Booksi nimekirjast laetud kirjed? (WiseBillist saadetud jäävad alles)")) return;
-            store.clearRegister(company.id, "books");
-            setRegister(store.register(company.id));
+            await store.clearRegister(company.id, "books").catch((e) => setMsg(`Viga: ${errText(e)}`));
+            await reloadRegister();
           }}>Tühjenda Booksi kirjed</button>
         </div>
       </Step>
+
+      <MembersStep company={company} onLeft={onLeft} />
 
       <div className="danger-zone">
         <button className="link danger" onClick={onDelete}>Kustuta see firma</button>
       </div>
     </div>
+  );
+}
+
+/** Kellel on ligipääs: liikmed (kõik võrdsed), lisamine olemasolevate kasutajate seast, eemaldamine. */
+function MembersStep({ company, onLeft }: { company: Company; onLeft: () => void }) {
+  const me = useMe();
+  const [members, setMembers] = useState<Member[]>([]);
+  const [users, setUsers] = useState<Profile[]>([]);
+  const [email, setEmail] = useState("");
+  const [msg, setMsg] = useState("");
+
+  const reload = () => store.members(company.id).then(setMembers).catch((e) => setMsg(errText(e)));
+  useEffect(() => {
+    reload();
+    store.users().then(setUsers).catch(() => setUsers([]));
+  }, [company.id]);
+
+  const candidates = users.filter((u) => !members.some((m) => m.userId === u.id));
+
+  async function add() {
+    setMsg("");
+    try {
+      await store.share(company.id, email);
+      setEmail("");
+      await reload();
+    } catch (e) {
+      setMsg(errText(e));
+    }
+  }
+
+  async function remove(m: Member) {
+    const self = m.userId === me?.id;
+    if (!confirm(self ? "Eemalda ennast sellest firmast? Sa ei näe seda firmat enam." : `Eemalda ${m.email} ligipääs?`)) return;
+    try {
+      await store.unshare(company.id, m.userId);
+      if (self) onLeft();
+      else await reload();
+    } catch (e) {
+      setMsg(errText(e));
+    }
+  }
+
+  return (
+    <Step n={5} title="Kellel on ligipääs" state="optional">
+      <p className="hint">Kõik liikmed näevad ja muudavad firmat ning saadavad selle arveid. Uue kasutaja lisab admin lehel Kasutajad.</p>
+      <ul className="members">
+        {members.map((m) => (
+          <li key={m.userId}>
+            <span>{m.email}{m.userId === me?.id && <span className="muted"> (sina)</span>}</span>
+            {members.length > 1 && (
+              <button className="link danger" onClick={() => remove(m)}>{m.userId === me?.id ? "Lahku" : "Eemalda"}</button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {candidates.length > 0 ? (
+        <div className="add-user">
+          <Select label="Lisa kasutaja" value={email} onChange={setEmail}
+            options={candidates.map((u) => ({ value: u.email, label: u.email }))} />
+          <button disabled={!email} onClick={add}>Anna ligipääs</button>
+        </div>
+      ) : (
+        <p className="hint">Kõigil kasutajatel on juba ligipääs.</p>
+      )}
+      {msg && <p className="callout err">{msg}</p>}
+    </Step>
   );
 }
 

@@ -24,14 +24,20 @@ export default function Home() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [status, setStatus] = useState("");
   const [dragOver, setDragOver] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    const list = store.companies();
-    setCompanies(list);
-    const active = store.activeCompanyId();
-    setCompanyId(list.some((c) => c.id === active) ? active : (list[0]?.id ?? ""));
+    store.companies().then((list) => {
+      setCompanies(list);
+      const active = store.activeCompanyId();
+      setCompanyId(list.some((c) => c.id === active) ? active : (list[0]?.id ?? ""));
+      setLoaded(true);
+    }).catch((e) => (setStatus(`Viga: ${e instanceof Error ? e.message : e}`), setLoaded(true)));
   }, []);
-  useEffect(() => setRegister(companyId ? store.register(companyId) : []), [companyId]);
+  useEffect(() => {
+    if (!companyId) return setRegister([]);
+    store.register(companyId).then(setRegister).catch(() => setRegister([]));
+  }, [companyId]);
 
   const company = companies.find((c) => c.id === companyId);
   const companyMissing = company ? companyIssues(company).filter((i) => i.required) : [];
@@ -66,7 +72,7 @@ export default function Home() {
           setStatus(`Töötlen: ${file.name} …`);
           result = await postFile(file, { direction });
         }
-        const m = store.mappings(company.id);
+        const m = await store.mappings(company.id);
         setInvoices((prev) => [...prev, ...result.invoices.map((i) => prepareForCompany(i, company, m))]);
         setStatus("");
       } catch (e) {
@@ -88,19 +94,24 @@ export default function Home() {
   const ready = invoices.filter(isReady);
 
   // Register + õpitud vastendused; tehtud arved eemaldatakse eelvaatest
-  function finish(company: Company, done: Invoice[]) {
-    store.addToRegister(company.id, done.map((i) => toRegisterEntry(i)));
-    store.saveMappings(company.id, rememberMappings(done, store.mappings(company.id)));
-    setRegister(store.register(company.id));
+  async function finish(company: Company, done: Invoice[]) {
     const ids = new Set(done.map((i) => i.id));
     setInvoices((prev) => prev.filter((i) => !ids.has(i.id)));
+    if (!done.length) return;
+    try {
+      await store.addToRegister(company.id, done.map((i) => toRegisterEntry(i)));
+      await store.saveMappings(company.id, rememberMappings(done, await store.mappings(company.id)));
+      setRegister(await store.register(company.id));
+    } catch (e) {
+      setStatus(`Arved on tehtud, aga registrisse kandmine ebaõnnestus: ${e instanceof Error ? e.message : e}`);
+    }
   }
 
-  function exportXml() {
+  async function exportXml() {
     if (!company) return;
     downloadFile(`books-earve-${company.regNumber || company.name}-${new Date().toISOString().slice(0, 10)}.xml`,
       buildEInvoiceXml(ready), "application/xml");
-    finish(company, ready);
+    await finish(company, ready);
     setStatus(`✓ ${ready.length} arvet laaditi alla XML-failina. Impordi see Booksis: Ostuarved/Müügiarved → Funktsioonid → Impordid → E-arve.`);
   }
 
@@ -117,13 +128,14 @@ export default function Home() {
         update(inv.id, (i) => ({ ...i, sendError: e instanceof Error ? e.message : String(e) }));
       }
     }
-    finish(company, sent);
+    await finish(company, sent);
     const failed = ready.length - sent.length;
     setStatus(`✓ ${sent.length} arvet saadetud Booksi (Ostuarved → Registrid → Tarnija e-arved)` +
       (failed ? ` · ${failed} ebaõnnestus – põhjus on arve juures punasega` : ""));
   }
   const billberryReady = direction === "purchase" && !!company?.billberry?.keyId && !!company.billberry.key;
 
+  if (!loaded) return <main><p className="muted">Laen …</p></main>;
   if (!companies.length)
     return (
       <main>

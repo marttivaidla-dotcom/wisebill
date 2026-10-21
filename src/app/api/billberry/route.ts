@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireUser } from "@/lib/supabase/server";
 import { BILLBERRY_HOSTS, Billberry, type BillberryEnv } from "@/lib/billberry";
 
 // Vahendaja Billberry API-le (brauserist otse ei saa – CORS). Võti tuleb firma seadetest.
@@ -13,6 +14,8 @@ const MAX_XML = 1024 * 1024;
  *  - upload -> üks ostuarve XML Billberrysse (sealt Booksi)
  */
 export async function POST(req: Request) {
+  const auth = await requireUser();
+  if (auth instanceof NextResponse) return auth;
   try {
     const body = await req.json();
     const env = String(body.env) as BillberryEnv;

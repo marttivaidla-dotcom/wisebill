@@ -1,30 +1,22 @@
 import type { Company, RegisterEntry } from "./types";
 import type { Mappings } from "./mapping";
+import { supabase } from "./supabase/client";
 
 /**
- * Püsiandmed: firmad + kontoplaanid, imporditud arvete register (duplikaadid), vastendused.
- * Praegu brauseri localStorage'is. Kõik ligipääs käib läbi selle faili, et hiljem saaks
- * sama liidese taha panna Supabase'i (jagatud seadmete vahel, varundatud).
- * Kuni selleni: kasuta "Varunda" nuppu (JSON), sest brauseri andmete kustutamisel kaob register.
+ * Püsiandmed Supabase'is: firmad (+ kontoplaan, vastendused, Billberry võti), liikmed, arvete register.
+ * Kõik ligipääs käib läbi selle faili. Õigused tagab andmebaas (RLS, schema/supabase.sql):
+ * kasutaja näeb ainult firmasid, mille liige ta on.
  */
 
-const K = {
-  companies: "wisebill.companies.v1",
-  active: "wisebill.activeCompany",
-  register: (id: string) => `wisebill.register.${id}`,
-  mappings: (id: string) => `wisebill.mappings.${id}`,
-};
-
-function read<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : fallback;
-  } catch {
-    return fallback;
-  }
+export interface Profile {
+  id: string;
+  email: string;
+  isAdmin: boolean;
 }
-function write(key: string, value: unknown) {
-  localStorage.setItem(key, JSON.stringify(value)); // viskab vea, kui maht täis – las kasutaja näeb
+
+export interface Member {
+  userId: string;
+  email: string;
 }
 
 export interface Backup {
@@ -37,52 +29,202 @@ export interface Backup {
 
 export const emptyMappings = (): Mappings => ({ parties: {}, articles: {}, accounts: {} });
 
+// ---------- andmebaasi rida <-> rakenduse mudel ----------
+
+interface CompanyRow {
+  id: string;
+  name: string;
+  reg_number: string;
+  vat_number: string | null;
+  address: string | null;
+  iban: string | null;
+  accounts: Company["accounts"];
+  default_expense_account: string | null;
+  default_income_account: string | null;
+  billberry: Company["billberry"] | null;
+}
+
+const fromRow = (r: CompanyRow): Company => ({
+  id: r.id,
+  name: r.name,
+  regNumber: r.reg_number,
+  vatNumber: r.vat_number ?? undefined,
+  address: r.address ?? undefined,
+  iban: r.iban ?? undefined,
+  accounts: r.accounts ?? [],
+  defaultExpenseAccount: r.default_expense_account ?? undefined,
+  defaultIncomeAccount: r.default_income_account ?? undefined,
+  billberry: r.billberry ?? undefined,
+});
+
+const toRow = (c: Company): Omit<CompanyRow, "id"> => ({
+  name: c.name,
+  reg_number: c.regNumber,
+  vat_number: c.vatNumber || null,
+  address: c.address || null,
+  iban: c.iban || null,
+  accounts: c.accounts,
+  default_expense_account: c.defaultExpenseAccount || null,
+  default_income_account: c.defaultIncomeAccount || null,
+  billberry: c.billberry ?? null,
+});
+
+interface RegisterRow {
+  direction: RegisterEntry["direction"];
+  party_reg_number: string;
+  party_name: string;
+  number: string;
+  date: string;
+  gross: number | string;
+  source: RegisterEntry["source"];
+  added_at: string;
+}
+
+const COMPANY_COLS = "id, name, reg_number, vat_number, address, iban, accounts, default_expense_account, default_income_account, billberry";
+
+/** Supabase'i viga -> eestikeelne Error. */
+function check<T>(r: { data: T; error: { message: string } | null }): T {
+  if (r.error) throw new Error(r.error.message);
+  return r.data;
+}
+
 export const store = {
-  companies: (): Company[] => read(K.companies, []),
-  saveCompany(c: Company) {
-    const list = store.companies();
-    const i = list.findIndex((x) => x.id === c.id);
-    if (i >= 0) list[i] = c;
-    else list.push(c);
-    write(K.companies, list);
+  // ---------- kasutaja ----------
+  async me(): Promise<Profile | null> {
+    const { data } = await supabase().auth.getUser();
+    if (!data.user) return null;
+    const p = check(await supabase().from("profiles").select("id, email, is_admin").eq("id", data.user.id).maybeSingle());
+    return p ? { id: p.id, email: p.email, isAdmin: p.is_admin } : { id: data.user.id, email: data.user.email ?? "", isAdmin: false };
   },
-  deleteCompany(id: string) {
-    write(K.companies, store.companies().filter((c) => c.id !== id));
-    localStorage.removeItem(K.register(id));
-    localStorage.removeItem(K.mappings(id));
+  async users(): Promise<Profile[]> {
+    const rows = check(await supabase().from("profiles").select("id, email, is_admin").order("email"));
+    return (rows ?? []).map((p) => ({ id: p.id, email: p.email, isAdmin: p.is_admin }));
   },
 
-  activeCompanyId: (): string => read(K.active, ""),
-  setActiveCompanyId: (id: string) => write(K.active, id),
-
-  register: (companyId: string): RegisterEntry[] => read(K.register(companyId), []),
-  addToRegister(companyId: string, entries: RegisterEntry[]) {
-    write(K.register(companyId), [...store.register(companyId), ...entries]);
+  // ---------- firmad ----------
+  async companies(): Promise<Company[]> {
+    const rows = check(await supabase().from("companies").select(COMPANY_COLS).order("name"));
+    return (rows as CompanyRow[]).map(fromRow);
   },
-  clearRegister(companyId: string, source?: RegisterEntry["source"]) {
-    write(K.register(companyId), source ? store.register(companyId).filter((e) => e.source !== source) : []);
+  async createCompany(name = ""): Promise<Company> {
+    const id = check(await supabase().rpc("create_company", { p_name: name })) as string;
+    return { id, name, regNumber: "", accounts: [] };
+  },
+  async saveCompany(c: Company) {
+    check(await supabase().from("companies").update(toRow(c)).eq("id", c.id));
+  },
+  async deleteCompany(id: string) {
+    check(await supabase().from("companies").delete().eq("id", id));
   },
 
-  mappings: (companyId: string): Mappings => ({ ...emptyMappings(), ...read(K.mappings(companyId), {}) }),
-  saveMappings: (companyId: string, m: Mappings) => write(K.mappings(companyId), m),
-
-  /** Kõik andmed ühte JSON-faili (varukoopia / teise arvutisse viimine). */
-  exportAll(): Backup {
-    const companies = store.companies();
-    return {
-      version: 1 as const,
-      exportedAt: new Date().toISOString(),
-      companies,
-      registers: Object.fromEntries(companies.map((c) => [c.id, store.register(c.id)])),
-      mappings: Object.fromEntries(companies.map((c) => [c.id, store.mappings(c.id)])),
-    };
+  // ---------- liikmed (jagamine) ----------
+  async members(companyId: string): Promise<Member[]> {
+    const rows = check(await supabase().from("company_members").select("user_id, profiles(email)").eq("company_id", companyId));
+    return (rows as unknown as { user_id: string; profiles: { email: string } | null }[])
+      .map((r) => ({ userId: r.user_id, email: r.profiles?.email ?? "" }))
+      .sort((a, b) => a.email.localeCompare(b.email));
   },
-  importAll(data: Backup) {
-    if (data?.version !== 1 || !Array.isArray(data.companies)) throw new Error("Tundmatu varukoopia formaat");
-    write(K.companies, data.companies);
-    for (const c of data.companies) {
-      write(K.register(c.id), data.registers?.[c.id] ?? []);
-      write(K.mappings(c.id), data.mappings?.[c.id] ?? emptyMappings());
+  async share(companyId: string, email: string) {
+    check(await supabase().rpc("share_company", { p_company: companyId, p_email: email }));
+  },
+  async unshare(companyId: string, userId: string) {
+    check(await supabase().from("company_members").delete().eq("company_id", companyId).eq("user_id", userId));
+  },
+
+  // ---------- aktiivne firma (selle brauseri mugavus) ----------
+  activeCompanyId(): string {
+    try {
+      return localStorage.getItem("wisebill.activeCompany") ?? "";
+    } catch {
+      return "";
     }
   },
+  setActiveCompanyId(id: string) {
+    try {
+      localStorage.setItem("wisebill.activeCompany", id);
+    } catch {
+      // privaatne aken vms – pole oluline
+    }
+  },
+
+  // ---------- arvete register ----------
+  async register(companyId: string): Promise<RegisterEntry[]> {
+    const rows = check(await supabase().from("register_entries")
+      .select("direction, party_reg_number, party_name, number, date, gross, source, added_at").eq("company_id", companyId));
+    return (rows as RegisterRow[]).map((r) => ({
+      direction: r.direction, partyRegNumber: r.party_reg_number, partyName: r.party_name, number: r.number,
+      date: r.date, gross: Number(r.gross), source: r.source, addedAt: r.added_at,
+    }));
+  },
+  async addToRegister(companyId: string, entries: RegisterEntry[]) {
+    if (!entries.length) return;
+    check(await supabase().from("register_entries").insert(entries.map((e) => ({
+      company_id: companyId, direction: e.direction, party_reg_number: e.partyRegNumber, party_name: e.partyName,
+      number: e.number, date: e.date, gross: e.gross, source: e.source,
+    }))));
+  },
+  async clearRegister(companyId: string, source?: RegisterEntry["source"]) {
+    let q = supabase().from("register_entries").delete().eq("company_id", companyId);
+    if (source) q = q.eq("source", source);
+    check(await q);
+  },
+
+  // ---------- õpitud vastendused ----------
+  async mappings(companyId: string): Promise<Mappings> {
+    const r = check(await supabase().from("companies").select("mappings").eq("id", companyId).maybeSingle());
+    return { ...emptyMappings(), ...(r?.mappings ?? {}) };
+  },
+  async saveMappings(companyId: string, m: Mappings) {
+    check(await supabase().from("companies").update({ mappings: m }).eq("id", companyId));
+  },
+
+  // ---------- varukoopia ----------
+  async exportAll(): Promise<Backup> {
+    const companies = await store.companies();
+    const registers: Backup["registers"] = {};
+    const mappings: Backup["mappings"] = {};
+    for (const c of companies) {
+      registers[c.id] = await store.register(c.id);
+      mappings[c.id] = await store.mappings(c.id);
+    }
+    return { version: 1, exportedAt: new Date().toISOString(), companies, registers, mappings };
+  },
+  /** Varukoopia firmad lisatakse UUTE firmadena (olemasolevaid ei kirjutata üle). Tagastab lisatud arvu. */
+  async importAll(data: Backup): Promise<number> {
+    if (data?.version !== 1 || !Array.isArray(data.companies)) throw new Error("Tundmatu varukoopia formaat");
+    for (const old of data.companies) {
+      const { id } = await store.createCompany(old.name);
+      await store.saveCompany({ ...old, id });
+      await store.saveMappings(id, data.mappings?.[old.id] ?? emptyMappings());
+      await store.addToRegister(id, data.registers?.[old.id] ?? []);
+    }
+    return data.companies.length;
+  },
 };
+
+/** Enne kasutajakontosid hoiti andmeid brauseris – kui need on alles, saab need üle tuua. */
+export function legacyBrowserData(): Backup | null {
+  try {
+    const companies = JSON.parse(localStorage.getItem("wisebill.companies.v1") ?? "[]") as Company[];
+    if (!companies.length) return null;
+    const get = (k: string) => JSON.parse(localStorage.getItem(k) ?? "null");
+    return {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      companies,
+      registers: Object.fromEntries(companies.map((c) => [c.id, get(`wisebill.register.${c.id}`) ?? []])),
+      mappings: Object.fromEntries(companies.map((c) => [c.id, get(`wisebill.mappings.${c.id}`) ?? emptyMappings()])),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Pärast ülekandmist vanad brauseri andmed eemaldatakse, et neid kaks korda ei toodaks. */
+export function clearLegacyBrowserData() {
+  try {
+    for (const k of Object.keys(localStorage)) if (/^wisebill\.(companies|register|mappings)/.test(k)) localStorage.removeItem(k);
+  } catch {
+    // pole oluline
+  }
+}
