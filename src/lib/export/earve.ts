@@ -81,7 +81,8 @@ function invoiceXml(inv: Invoice): string {
     tag("Currency", inv.currency) +
     tag("PaymentRefId", inv.referenceNumber) +
     tag("PaymentDescription", `Arve ${inv.number}`) +
-    `<Payable>YES</Payable>` +
+    // makstud kassatšekk: tasuda pole midagi (PayDueDate on siis valikuline, jääb kuupäevaks)
+    `<Payable>${inv.paid ? "NO" : "YES"}</Payable>` +
     tag("PayDueDate", inv.dueDate) +
     tag("PaymentTotalSum", amt(t.gross)) +
     tag("PayerName", payer.name) +

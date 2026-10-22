@@ -11,6 +11,7 @@ import { billberryReady, companyIssues } from "@/lib/company";
 import { findDuplicate, toSentEntry, type DuplicateHit } from "@/lib/duplicates";
 import { store } from "@/lib/store";
 import { callBillberry, downloadFile, parsePdf, parseText } from "@/lib/upload";
+import { binarize, ocrScale } from "@/lib/ocr-prep";
 import { Field, Step } from "./ui";
 
 const VAT_RATES = [24, 22, 13, 9, 5, 0];
@@ -33,6 +34,35 @@ async function registrySuggestions(inv: Invoice): Promise<Invoice["suggestions"]
     if (out.length >= 5) break;
   }
   return out.slice(0, 6).map(({ name, regNumber, address }) => ({ name, regNumber, address }));
+}
+
+/** Foto/skaneering OCR-i jaoks: õige suurus + adaptiivne lävendamine (vt ocr-prep.ts). Viga -> originaal. */
+async function prepareImage(file: File): Promise<Blob> {
+  try {
+    const bmp = await createImageBitmap(file); // arvestab EXIF-i pööramist
+    const s = ocrScale(bmp.width, bmp.height);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bmp.width * s);
+    canvas.height = Math.round(bmp.height * s);
+    const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+    ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    binarize(img);
+    ctx.putImageData(img, 0, 0);
+    return await new Promise<Blob>((ok, fail) => canvas.toBlob((b) => (b ? ok(b) : fail(new Error("toBlob"))), "image/png"));
+  } catch {
+    return file;
+  }
+}
+
+/** Tarnija ametlik nimi ja KMKR äriregistrist reg.koodi järgi (OCR-i vead nimes ei loe). */
+async function registryDetails(regNumber: string): Promise<RegistryDetails | null> {
+  try {
+    const res = await fetch(`/api/ariregister?code=${regNumber}`);
+    return res.ok ? (await res.json()).company : null;
+  } catch {
+    return null;
+  }
 }
 
 const xmlName = (inv: Invoice) => `earve-${inv.seller.regNumber || "tarnija"}-${inv.number.replace(/[^\w.-]+/g, "_") || inv.id}.xml`;
@@ -78,7 +108,7 @@ export default function Home() {
           setStatus(`Loen pildilt teksti: ${file.name} … (võib võtta kuni minuti)`);
           const { createWorker } = await import("tesseract.js");
           const worker = await createWorker(["est", "eng"]);
-          const { data } = await worker.recognize(file);
+          const { data } = await worker.recognize(await prepareImage(file));
           await worker.terminate();
           inv = await parseText(data.text, file.name);
         } else {
@@ -89,6 +119,16 @@ export default function Home() {
         setInvoices((prev) => [...prev, prepared]);
         if (!prepared.seller.regNumber)
           registrySuggestions(prepared).then((suggestions) => update(prepared.id, (i) => ({ ...i, suggestions })));
+        else
+          registryDetails(prepared.seller.regNumber).then((d) => {
+            if (!d) return;
+            // kasutaja võis vahepeal reg.koodi muuta – siis mitte üle kirjutada
+            update(prepared.id, (i) => i.seller.regNumber !== d.regNumber ? i : {
+              ...i,
+              seller: { ...i.seller, name: d.name, vatNumber: i.seller.vatNumber || d.vatNumber || undefined },
+              warnings: d.status !== "R" ? [...i.warnings, `Tarnija on äriregistris olekus "${d.status}" (mitte registrisse kantud)`] : i.warnings,
+            });
+          });
         setStatus("");
       } catch (e) {
         setStatus(`Viga (${file.name}): ${errText(e)}`);
@@ -288,6 +328,10 @@ function InvoiceCard({ inv, company, duplicate, onChange, onRemove }: {
         <Field label="Maksetähtaeg" required type="date" value={inv.dueDate} error={err("dueDate")} onChange={(v) => set("dueDate", v)} />
         <Field label="Viitenumber" value={inv.referenceNumber ?? ""} onChange={(v) => set("referenceNumber", v.replace(/\D/g, ""))} />
       </div>
+      <label className="inline">
+        <input type="checkbox" checked={!!inv.paid} onChange={(e) => set("paid", e.target.checked || undefined)} />
+        Juba makstud (kassatšekk kaardi või sularahaga) – e-arvel „tasuda pole vaja“
+      </label>
 
       <div className="parties">
         <div>

@@ -17,6 +17,11 @@ müügiarved, Excel/CSV import, pangaväljavõtted, Books REST API, Billberry �
 - `src/lib/parsers/text.ts` – PDF/OCR tekstist: summad kolmikust neto + KM = kokku (sildid ja numbrid võivad
   olla eri veergudes), read (netod annavad kokku arve neto), osapooled registrikoodi ümbrusest → `inv.candidates`.
   `common.ts` – ET numbrid/kuupäevad.
+- Kassatšekid: KMKR ilma EE-ta, tšeki nr + kuupäev (ppkkaa) kassatabelist, read KM-ga summadest (allahindlus
+  eelmise kauba juurde), makstud (kaart/sularaha) -> `paid`, e-arvel `Payable=NO`. OCR-i "UU/00" -> "OÜ".
+- `src/lib/ocr-prep.ts` – pildi eeltöötlus enne Tesseracti (brauseris canvas): skaleerimine + adaptiivne lävendamine.
+  Fotod (kortsus tšekk, mustriline taust) loevad sellega oluliselt paremini. Testi OCR-i väljundid: `test/fixtures/ocr/`.
+- Reg.koodi olemasolul võetakse tarnija ametlik nimi ja KMKR äriregistrist (OCR-i vead nimes ei loe).
 - `src/lib/prepare.ts` – `prepareForCompany()`: oma firma tuvastatakse reg.koodi/KMKR-i/nime järgi, tarnija = teine.
 - `src/lib/vat.ts` – summad arvutatakse alati ise (`recalcRow`, `totals`, KM määrade kaupa summalt); `invoiceIssues`.
 - `src/lib/export/earve.ts` – e-arve v1.2 XML. **XSD nõuab elementide järjekorda – ära muuda.**

@@ -44,7 +44,8 @@ export function prepareForCompany(inv: Invoice, company: Company, known: KnownSu
     const isOwn = (p: Party) =>
       (!!p.regNumber && p.regNumber === company.regNumber) ||
       (!!p.vatNumber && p.vatNumber === company.vatNumber) ||
-      (!!p.name && bareName(p.name) === bareName(company.name));
+      // nimi ka OCR-i müra sees: "of STIVARO OÜ" sisaldab "stivaro"
+      (!!p.name && !!bareName(company.name) && ` ${bareName(p.name)} `.includes(` ${bareName(company.name)} `));
     const others = parties.filter((p) => !isOwn(p));
     seller = {
       ...(others.find((p) => p.regNumber) || others[0] || { name: "", regNumber: "" }),
@@ -60,7 +61,8 @@ export function prepareForCompany(inv: Invoice, company: Company, known: KnownSu
         seller = { ...seller, name: hints[0][0].toUpperCase() + hints[0].slice(1) };
       }
     }
-    if (parties.length && !parties.some(isOwn))
+    // kassatšekil ostjat sageli polegi
+    if (parties.length && !parties.some(isOwn) && !inv.paid)
       warnings.push(`Firmat "${company.name}" dokumendil ei leitud – kas arve on õige firma oma?`);
   } else if (inv.buyer.regNumber && inv.buyer.regNumber !== company.regNumber) {
     warnings.push(`Dokumendil on ostja reg.kood ${inv.buyer.regNumber}, valitud firmal ${company.regNumber}`);

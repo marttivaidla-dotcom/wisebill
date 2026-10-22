@@ -72,3 +72,15 @@ test("duplikaadid: sama tarnija + number, sama summa ±3 päeva, sama partii", a
   // teine tarnija
   assert.equal(findDuplicate({ ...a, seller: { ...a.seller, regNumber: "99999999" } }, [toSentEntry(a)]), null);
 });
+
+test("makstud kassatšekk: Payable=NO, XML vastab XSD-le", async () => {
+  const inv = prepareForCompany(parseInvoiceText(readFileSync("test/fixtures/ocr/neste-tsekk.txt", "utf8"), "n.jpg"), company);
+  assert.equal(inv.paid, true);
+  const xml = buildEInvoiceXml([inv]);
+  assert.match(xml, /<Payable>NO<\/Payable>/);
+  const result = await validateXML({
+    xml: [{ fileName: "tsekk.xml", contents: xml }],
+    schema: [readFileSync("schema/e-invoice_ver1.2.EN.xsd", "utf8")],
+  });
+  assert.deepEqual(result.errors.map((e) => e.rawMessage), []);
+});

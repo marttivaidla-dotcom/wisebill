@@ -32,6 +32,7 @@ export interface Invoice {
   buyer: Party; // valitud firma
   rows: InvoiceRow[];
   referenceNumber?: string; // viitenumber
+  paid?: boolean; // juba makstud (kassatšekk kaardi/sularahaga) – e-arvel Payable=NO
   source: string; // failinimi, millest arve tuli
   warnings: string[]; // parseri hoiatused, mida kasutaja peab eelvaates kontrollima
   allowDuplicate?: boolean; // kasutaja kinnitas, et see pole duplikaat

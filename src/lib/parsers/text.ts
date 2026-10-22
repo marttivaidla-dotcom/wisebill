@@ -20,11 +20,16 @@ const DATE = String.raw`(\d{1,2}[./]\d{1,2}[./]\d{2,4}|\d{4}-\d{2}-\d{2})`;
 const VAT_RATES = [24, 22, 20, 13, 9, 5];
 // Lühivorm ainult suurtähtedega ("as" OCR-i prügis pole aktsiaselts), pikk vorm suure algustähega või suurtähtedega
 const LEGAL_FORM = /(?<![\p{L}\d])(?:OÜ|OU|AS|MTÜ|FIE|TÜ|UÜ|SA|[OoAaMmSs](?:saühing|ktsiaselts|ittetulundusühing|ihtasutus)|OSAÜHING|AKTSIASELTS)(?![\p{L}\d])/u;
-const PARTY_LABEL = /^(?:klient|ostja|maksja(?:\s*nimi)?|müüja|hankija|tarnija|saaja|makse\s*saaja|buyer|seller|customer|supplier|bill\s*to)\s*:\s*/i;
+const PARTY_LABEL = /^(?:klient|ostja|maksja(?:\s*nimi)?|müüja|hankija|tarnija|saaja|makse\s*saaja|nimi(?:\s*\/\s*nimetus)?|nimetus|buyer|seller|customer|supplier|bill\s*to)\s*:\s*/i;
 // Read, mis pole nime kandidaadid: sildid, kontaktid, pangad
-const NOT_NAME = /^(?:arve|kuupäev|maksetähtaeg|tähtaeg|viitenumber|periood|kmkr|reg|tel|telefon|e-?post|e-?mail|www|iban|swift|swedbank|seb|lhv|luminor|coop|tere)\b|@|https?:|pank\b|bank\b/i;
+const NOT_NAME = /^(?:arve|kuupäev|maksetähtaeg|tähtaeg|viitenumber|periood|kmkr|km-?nr|reg|tel|telefon|e-?post|e-?mail|www|iban|swift|swedbank|seb|lhv|luminor|coop|tere)\b|@|https?:|pank\b|bank\b/i;
+// OCR-i tähevead siltides: "Kuupdev", "Maksetahtaeg"
+const DATE_LABEL = String.raw`(?:arve\s*kuup\S{1,2}ev|kuup\S{1,2}ev|kpv|invoice\s*date|date)`;
+const DUE_LABEL = String.raw`(?:makset\S{1,2}htaeg|t\S{1,2}htaeg|due\s*date|maksta\s*hiljemalt)`;
 // OCR liidab veerud üheks reaks: "Firma OÜ Arve nr 123" -> nimi lõpeb enne kõrvalveeru silti
-const COLUMN_LABEL = /\s+(?:arve\s*(?:nr|number|no)|invoice\s*(?:nr|number|no)|kuupäev|maksetähtaeg|viitenumber|kliendinumber|periood|date)\b.*$/i;
+const COLUMN_LABEL = /\s+(?:arve\s*(?:nr|number|no)|invoice\s*(?:nr|number|no)|kuup\S{1,2}ev|makset\S{1,2}htaeg|viitenumber|kliendinumber|periood|date)\b.*$/i;
+// Kaardi/sularahaga makstud tšekk: tähtaeg = kuupäev, e-arvel Payable=NO
+const PAID = /maksek\S{2,3}t|makseviis\s+kaart|kaardimakse|mastercard|\bvisa\b|sularaha|\bpan:|arve\s+on\s+(?:makstud|tasutud)|tasutud\s+\d/i;
 // Domeenid, mis ei viita tarnijale (pangad, e-post, riik)
 const GENERIC_DOMAINS = new Set([
   "gmail", "hotmail", "outlook", "yahoo", "icloud", "mail", "online", "swedbank", "seb", "lhv", "luminor", "coop",
@@ -110,24 +115,31 @@ function nameNear(lines: string[], i: number, before: string): string {
     const named = upToLegalForm(l);
     if (named && !NOT_NAME.test(named) && !/:\s*\S/.test(named)) return clean(named).slice(0, 100);
     if (l.length > 80 || NOT_NAME.test(l) || /:\s*\S/.test(l) || COUNTRY.test(l)) continue;
-    if (ADDRESS.test(l) || !/\p{L}{3,}/u.test(l)) continue;
+    // ilma ettevõtlusvormita nimi: vähemalt kaks sõna (OCR-i müra "MASS! X" pole nimi)
+    if (ADDRESS.test(l) || !/\p{L}{3,}/u.test(l) || (l.match(/\p{L}{2,}/gu)?.length ?? 0) < 2) continue;
     return clean(l).slice(0, 100);
   }
   return "";
 }
 
+/** KMKR real: "EE101234567", "EE 100062906" või tšekil ilma EE-ta "KM-nr: 101343514". */
+function vatOf(l: string | undefined): string | undefined {
+  if (!l) return undefined;
+  const m = l.match(/\bEE\s?(\d{9})\b/) ?? l.match(/\b(?:KM-?\s*nr|KMKR(?:\s*nr)?)\.?\s*:?\s*(\d{9})\b/i);
+  return m ? `EE${m[1]}` : undefined;
+}
+
 /** Kõik dokumendis nimetatud firmad (registrikoodiga ja ilma) dokumendi järjekorras. */
 function findParties(lines: string[]): Party[] {
   const out: (Party & { line: number })[] = [];
-  const REG = /(?:reg(?:istri)?\.?\s*(?:kood|nr|code|number)\.?|registrikood)\s*[.:]?\s*(\d{8})(?!\d)|\((\d{8})\)/gi;
+  const REG = /(?:reg(?:istri)?\.?\s*(?:kood|nr|code|number)\.?|registrikood|registreerimis(?:number|nr))\s*[.:]?\s*(\d{8})(?!\d)|\((\d{8})\)/gi;
   lines.forEach((l, i) => {
     for (const m of l.matchAll(REG)) {
       const regNumber = m[1] ?? m[2];
       if (out.some((p) => p.regNumber === regNumber)) continue;
-      // KMKR: lähim EE-number ±4 rea piires
+      // KMKR: lähim KMKR ±4 rea piires
       let vatNumber: string | undefined;
-      for (let d = 0; d <= 4 && !vatNumber; d++)
-        vatNumber = [lines[i + d], lines[i - d]].map((x) => x?.match(/\b(EE\d{9})\b/)?.[1]).find(Boolean);
+      for (let d = 0; d <= 4 && !vatNumber; d++) vatNumber = [lines[i + d], lines[i - d]].map(vatOf).find(Boolean);
       out.push({ name: nameNear(lines, i, l.slice(0, m.index)), regNumber, vatNumber, line: i });
     }
   });
@@ -136,9 +148,9 @@ function findParties(lines: string[]): Party[] {
   lines.forEach((l, i) => {
     // Summadega või numbrirohke rida on tabelirida, mitte firma nimi
     if (l.length > 80 || !LEGAL_FORM.test(l) || NOT_NAME.test(l) || /^kasutaja:/i.test(l) || amountsOf(l, i).length || /\d{4,}/.test(l.replace(COLUMN_LABEL, ""))) return;
-    const name = l.replace(PARTY_LABEL, "").replace(COLUMN_LABEL, "").trim();
+    const name = upToLegalForm(l.replace(PARTY_LABEL, "")) || l.replace(PARTY_LABEL, "").replace(COLUMN_LABEL, "").trim();
     if (out.some((p) => key(p.name).includes(key(name)) || key(name).includes(key(p.name) || "\0"))) return;
-    out.push({ name: name.slice(0, 100), regNumber: "", vatNumber: l.match(/\b(EE\d{9})\b/)?.[1], line: i });
+    out.push({ name: name.slice(0, 100), regNumber: "", vatNumber: vatOf(l), line: i });
   });
   return out.sort((a, b) => a.line - b.line).map(({ line: _, ...p }) => p);
 }
@@ -157,6 +169,12 @@ function findHints(lines: string[], text: string): string[] {
   return [...new Set(out)];
 }
 
+/** KM-i kokkuvõtte tabeli rida ilma kirjelduseta: "24% 30,91 7,42 38,33", "20,00 62,51 12,50 75,01". */
+function isVatSummary(l: string, a: Amount[]): boolean {
+  const letters = l.slice(0, a[0].index).replace(/\d+\s*%/g, "").replace(/[^\p{L}]/gu, "").length;
+  return letters < 3 && !QTY_UNIT.test(l) && (/\d\s*%/.test(l) || VAT_RATES.includes(a[0].value));
+}
+
 /** Tabeliread, mille netod annavad järjest kokku arve neto. Ei leia -> []. */
 function findRows(lines: string[], totalNet: number, rate: number): InvoiceRow[] {
   type Cand = { line: number; net: number; vat?: number; amounts: Amount[] };
@@ -169,6 +187,7 @@ function findRows(lines: string[], totalNet: number, rate: number): InvoiceRow[]
     if (!a.length) return;
     const words = l.slice(0, a[0].index).split(/\s+/);
     if (TOTAL_WORDS.test(words[0]) || (TOTAL_WORDS.test(words.slice(0, 2).join(" ")) && !QTY_UNIT.test(l))) return;
+    if (isVatSummary(l, a)) return;
     const v = a.map((x) => x.value);
     // neto, KM, kokku järjest real (nt "Teenus 300,00 € 1 tk 300,00 € 72,00 € 372,00 €")
     for (let k = v.length - 3; k >= 0; k--)
@@ -223,17 +242,84 @@ function findRows(lines: string[], totalNet: number, rate: number): InvoiceRow[]
   });
 }
 
+/**
+ * Kassatšeki read: summad on KM-ga, allahindlus eraldi real ("B2B allahindlus 1,60-") liidetakse eelmisele reale.
+ * Read peavad summeeruma kogusummaks ja neto (KM-ga summa / (1 + määr)) arve netoks, muidu [].
+ */
+function findGrossRows(lines: string[], gross: number, net: number, rate: number): InvoiceRow[] {
+  const DISCOUNT = /allahindlus|soodustus|hinnaalandus|discount/i;
+  type Cand = { line: number; value: number; discount: boolean };
+  const cands: Cand[] = [];
+  lines.forEach((l, i) => {
+    const a = amountsOf(l, i);
+    if (!a.length) return;
+    const words = l.slice(0, a[0].index).split(/\s+/);
+    // tšeki kaubareal pole kokkuvõtte sõnu ("EUR kokku: 75,01", "KOKKU 38,33") ega makseviisi
+    if (TOTAL_WORDS.test(words.join(" ")) || isVatSummary(l, a) || /makseviis|maksek|kaart|sularaha|hinnavõit|tagasi/i.test(l)) return;
+    const last = a[a.length - 1];
+    const discount = DISCOUNT.test(l);
+    const negative = discount || /^\S*\d-/.test(l.slice(last.index)); // "1,60-"
+    cands.push({ line: i, value: negative ? -Math.abs(last.value) : last.value, discount });
+  });
+  for (let from = 0; from < cands.length; from++) {
+    let sum = 0;
+    for (let k = from; k < cands.length; k++) {
+      sum += cands[k].value;
+      if (!near(sum, gross, 0.005)) continue;
+      const window = cands.slice(from, k + 1);
+      if (window[0].discount || window.length < 1) break;
+      // allahindlus eelmise kauba juurde
+      const items: { line: number; value: number }[] = [];
+      for (const c of window) {
+        if (c.discount && items.length) items[items.length - 1].value = round2(items[items.length - 1].value + c.value);
+        else items.push({ line: c.line, value: c.value });
+      }
+      const rows = items.map((it) => {
+        const l = lines[it.line];
+        let description = l.slice(0, amountsOf(l, it.line)[0].index).replace(/\b\d+(?:[.,]\d+)?\s*tk\s*x\s*$/i, "").replace(/[€\s=x]+$/i, "").trim();
+        // kaup eelmisel real ("2x KOORMAKATE 15M2" / "A 15,95 31,90"); vöötkoodi rida ("1. 2770020326395") mitte
+        if (description.replace(/[^\p{L}]/gu, "").length < 3)
+          for (let j = it.line - 1; j >= Math.max(0, it.line - 2); j--) {
+            const p = lines[j];
+            if (amountsOf(p, j).length || /^\d+\.?\s+\d{8,}$/.test(p) || isHeader(p)) break;
+            if (p.replace(/[^\p{L}]/gu, "").length >= 3) {
+              description = p;
+              break;
+            }
+          }
+        return makeRow({ description: description.slice(0, 200) || "Kaup", quantity: 1, unitPrice: round2(it.value / (1 + rate / 100)), vatRate: rate });
+      });
+      // netode summa peab klappima arve netoga (ümardus ridade kaupa)
+      const rowsNet = round2(rows.reduce((s, r) => s + r.net, 0));
+      return Number.isFinite(net) && !near(rowsNet, net, 0.005) ? [] : rows;
+    }
+  }
+  return [];
+}
+
 export function parseInvoiceText(text: string, filename: string): Invoice {
   const inv = emptyInvoice(filename);
-  const t = text.replace(/\r/g, "").replace(/[  ]+/g, " ");
+  // OCR loeb "OÜ" sageli kui "UU", "00", "0Ü" – nime järel (tähtedega sõna ees) parandatakse
+  const t = text
+    .replace(/\r/g, "")
+    .replace(/[  ]+/g, " ")
+    .replace(/(?<=\p{L}{2,} )(?:UU|00|0Ü|0U|ÜÜ|OÜ\.)(?= |$)/gmu, "OÜ");
   const lines = t.split("\n").map((l) => l.trim()).filter(Boolean);
 
   inv.number =
     find(t, /(?:arve|invoice)\s*(?:nr|number|no)\.?\s*[:#]?\s*([A-Z0-9][A-Z0-9\-\/]*\d[A-Z0-9\-\/]*)/i) ||
-    find(t, /^\s*(?:arve|invoice)\s+([A-Z0-9\-\/]*\d[A-Z0-9\-\/]*)\s*$/im);
-  inv.date = parseDate(find(t, new RegExp(String.raw`(?:arve\s*kuupäev|kuupäev|kpv|invoice\s*date|date)\s*[.:]?\s*${DATE}`, "i")));
-  inv.dueDate = parseDate(find(t, new RegExp(String.raw`(?:maksetähtaeg|tähtaeg|due\s*date|maksta\s*hiljemalt)\s*[.:]?\s*${DATE}`, "i")));
+    find(t, /^\s*(?:arve|invoice)\s+([A-Z0-9\-\/]*\d[A-Z0-9\-\/]*)\s*$/im) ||
+    // tšekk: "Arve: 0532206", "Kviitung Nr: 3319"
+    find(t, /^\s*(?:arve|kviitung|tšekk|tsekk)\s*(?:nr\.?)?\s*:\s*([A-Z0-9][A-Z0-9\-\/]*\d[A-Z0-9\-\/]*)/im);
+  inv.date = parseDate(find(t, new RegExp(String.raw`${DATE_LABEL}\s*[.:]?\s*${DATE}`, "i")));
+  inv.dueDate = parseDate(find(t, new RegExp(String.raw`${DUE_LABEL}\s*[.:]?\s*${DATE}`, "i")));
+  // kassatšeki tabel "Kv-Arve Kpv Aeg Oper Kassa" / "438 210926 17:12 10825 2": number ja kuupäev (ppkkaa)
+  const till = t.match(/(?:^|\s)(\d{1,10})\s+(\d{2})(\d{2})(\d{2})\s+\d{1,2}:\d{2}\b/m);
+  if (till && !inv.number) inv.number = till[1];
+  if (till && !inv.date) inv.date = parseDate(`${till[2]}.${till[3]}.${till[4]}`);
   if (!inv.date) inv.date = parseDate(find(t, new RegExp(DATE)));
+  inv.paid = PAID.test(t) || undefined;
+  if (!inv.dueDate && inv.paid) inv.dueDate = inv.date;
   if (!inv.dueDate) {
     const days = Number(find(t, /maksetingimus\D{0,20}(\d{1,3})\s*päev/i));
     inv.dueDate = addDays(inv.date, days || 14);
@@ -255,7 +341,7 @@ export function parseInvoiceText(text: string, filename: string): Invoice {
   const rateFound = Number(find(t, /(?:käibemaks|km|vat)\D{0,15}?(\d{1,2})(?:[.,]0+)?\s*%/i));
   let net = NaN;
   let rate = rateFound || DEFAULT_VAT;
-  const gross = found?.gross ?? labeledAmount(lines, /kokku\s*(?:tasuda|maksta)|tasumisele|tasuda|arve\s*summa|summa\s*kokku|kokku|total\s*due|amount\s*due|grand\s*total/i);
+  const gross = found?.gross ?? labeledAmount(lines, /kokku\s*(?:tasuda|maksta)|tasumisele|tasuda|arve\s*summa|summa\s*kokku|kokku|vahesumma|total\s*due|amount\s*due|grand\s*total/i);
   if (found) {
     net = found.net;
     rate = found.rate;
@@ -264,12 +350,15 @@ export function parseInvoiceText(text: string, filename: string): Invoice {
     net = round2(gross / (1 + rate / 100));
   }
 
-  const rows = Number.isFinite(net) ? findRows(lines, net, rate) : [];
+  let rows = Number.isFinite(net) ? findRows(lines, net, rate) : [];
+  // Kassatšekil on read KM-ga summadega ("4 tk x 1.75 = 7.00 F") – read summeeruvad kogusummaks
+  if (!rows.length && Number.isFinite(gross)) rows = findGrossRows(lines, gross, net, rate);
   if (rows.length) inv.rows = rows;
   else
     inv.rows.push(
       makeRow({
-        description: inv.number ? `Arve ${inv.number}` : "Arve summa",
+        // tankla tšekk: "Toode: FUTURA D"
+        description: find(t, /^\s*toode\s*:\s*(.+)$/im) || (inv.number ? `Arve ${inv.number}` : "Arve summa"),
         quantity: 1,
         unitPrice: Number.isFinite(net) ? net : 0,
         vatRate: rate,

@@ -46,6 +46,9 @@ export function findDuplicate(inv: Invoice, sent: SentEntry[], batch: Invoice[] 
   ].filter(({ r }) => sameSeller(r, me));
 
   const exact = others.find(({ r }) => me.number && normNumber(r.number) === normNumber(me.number));
+  // Kassatšeki numbrid ("438") korduvad – kauge kuupäevaga sama number on ainult võimalik duplikaat
+  if (exact && exact.r.date && me.date && dayDiff(exact.r.date, me.date) > 60)
+    return { level: "võimalik", reason: `Sama numbriga arve ${exact.r.number} teise kuupäevaga ${exact.r.date} (${exact.where})` };
   if (exact) return { level: "kindel", reason: `Arve ${exact.r.number} on juba olemas (${exact.where})` };
 
   const similar = others.find(
