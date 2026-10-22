@@ -1,4 +1,4 @@
-import type { Company, Invoice } from "./types";
+import type { Company, Invoice, Party, Supplier } from "./types";
 
 /**
  * Firma-põhised vastendused, mis õpitakse kasutaja kinnitatud arvetest:
@@ -18,9 +18,24 @@ const partyKey = (inv: Invoice) => {
   return key(p.regNumber || p.name);
 };
 
+const LEGAL_FORMS = new Set(["oü", "ou", "as", "mtü", "fie", "tü", "uü", "sa"]);
+
+/** Booksi nimekirjast arve vastaspool: registrikood, siis KMKR, siis nimi ilma ettevõtlusvormita (nagu Books). */
+export function findSupplier(p: Party, suppliers: Supplier[] = []): Supplier | undefined {
+  const bare = (s: string) => key(s).replace(/[.,"']/g, " ").split(/\s+/).filter((w) => w && !LEGAL_FORMS.has(w)).join(" ");
+  return (
+    (p.regNumber && suppliers.find((s) => s.regNumber === p.regNumber.trim())) ||
+    (p.vatNumber && suppliers.find((s) => s.vatNumber && s.vatNumber === p.vatNumber!.replace(/\s/g, "").toUpperCase())) ||
+    (p.name && suppliers.find((s) => bare(s.name) === bare(p.name))) ||
+    undefined
+  );
+}
+
 /**
  * Valmistab parseri tulemuse ette konkreetse firma jaoks:
- * täidab firma enda andmed (ostuarvel ostja, müügiarvel müüja) ja varem õpitud koodid/kontod.
+ * täidab firma enda andmed (ostuarvel ostja, müügiarvel müüja), Booksi tarnija koodi ja kulukonto
+ * ning varem õpitud koodid/kontod.
+ * Konto järjekord: sama tarnija + sama kirjeldus (õpitud) > tarnija kulukonto Booksist > tarnija viimane konto.
  */
 export function prepareForCompany(inv: Invoice, company: Company, m: Mappings): Invoice {
   const own = { name: company.name, regNumber: company.regNumber, vatNumber: company.vatNumber, iban: company.iban };
@@ -32,9 +47,22 @@ export function prepareForCompany(inv: Invoice, company: Company, m: Mappings): 
   if (parsedOwn.regNumber && parsedOwn.regNumber !== company.regNumber)
     warnings.push(`Dokumendil on ${ownField === "buyer" ? "ostja" : "müüja"} reg.kood ${parsedOwn.regNumber}, valitud firmal ${company.regNumber}`);
 
-  const other = inv[otherField];
-  const pk = partyKey(inv);
-  const defaultAccount = inv.direction === "purchase" ? company.defaultExpenseAccount : company.defaultIncomeAccount;
+  const parsedOther = inv[otherField];
+  // Booksi tarnija: täidab puuduvad rekvisiidid ja koodi (ainult ostuarvel – kontaktid on tarnijad)
+  const sup = inv.direction === "purchase" ? findSupplier(parsedOther, company.suppliers) : undefined;
+  const other: Party = sup
+    ? {
+        ...parsedOther,
+        name: parsedOther.name || sup.name,
+        regNumber: parsedOther.regNumber || sup.regNumber,
+        vatNumber: parsedOther.vatNumber || sup.vatNumber,
+        iban: parsedOther.iban || sup.iban,
+        code: parsedOther.code || sup.code || undefined,
+      }
+    : parsedOther;
+  const pk = key(other.regNumber || other.name);
+  if (inv.direction === "purchase" && !sup && (other.regNumber || other.name))
+    warnings.push(`Tarnijat "${other.name || other.regNumber}" pole Booksi tarnijate nimekirjas – vali kulukonto käsitsi`);
   return {
     ...inv,
     warnings,
@@ -46,8 +74,8 @@ export function prepareForCompany(inv: Invoice, company: Company, m: Mappings): 
       account:
         r.account ||
         m.accounts[`${pk}|${key(r.description)}`] ||
+        sup?.account ||
         m.accounts[`${pk}|*`] ||
-        defaultAccount ||
         "",
     })),
   };
