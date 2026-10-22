@@ -75,8 +75,7 @@ export interface Company {
   address?: string; // juriidiline aadress (äriregistrist)
   iban?: string;
   accounts: Account[]; // kontoplaan
-  defaultExpenseAccount?: string; // vaikimisi kulukonto ostuarve ridadele
-  defaultIncomeAccount?: string; // vaikimisi tulukonto müügiarve ridadele
+  suppliers?: Supplier[]; // Booksi tarnijad ja nende kulukontod
   billberry?: BillberrySettings; // firma Billberry API võti – ostuarved Billberry kaudu Booksi
 }
 
@@ -86,6 +85,16 @@ export interface BillberrySettings {
   keyId: string;
   key: string;
   checkedAt?: string; // viimane edukas ühenduse kontroll
+}
+
+/** Booksi kontakt (tarnija) koos seotud kulukontoga – Booksi kontaktide registri (CUVc) ekspordist. */
+export interface Supplier {
+  code: string; // Booksi kontakti kood
+  name: string;
+  regNumber: string; // Reg.nr.1
+  vatNumber?: string; // KMKR nr.
+  iban?: string; // Pangakonto
+  account?: string; // Kulukonto (AccCost)
 }
 
 /** Juba imporditud (või Booksis olemasolev) arve – duplikaatide kontrolliks. */

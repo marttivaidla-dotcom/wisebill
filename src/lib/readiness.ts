@@ -18,9 +18,9 @@ export function companyIssues(c: Company): CompanyIssue[] {
   if (c.vatNumber && !/^EE\d{9}$/.test(c.vatNumber)) add("vatNumber", "KMKR on kujul EE + 9 numbrit", false);
   if (c.iban && !/^[A-Z]{2}\d{2}[A-Z0-9]{10,30}$/.test(c.iban)) add("iban", "IBAN tundub vale", false);
   if (!c.accounts.length) add("accounts", "Kontoplaan puudub");
-  if (!c.defaultExpenseAccount) add("defaultExpenseAccount", "Vaikimisi kulukonto valimata");
-  else if (!c.accounts.some((a) => a.code === c.defaultExpenseAccount))
-    add("defaultExpenseAccount", "Vaikimisi kulukonto pole kontoplaanis");
+  const missing = (c.suppliers ?? []).filter((s) => s.account && !c.accounts.some((a) => a.code === s.account));
+  if (c.accounts.length && missing.length)
+    add("suppliers", `${missing.length} tarnija kulukonto puudub kontoplaanis (nt ${missing[0].name}: ${missing[0].account})`, false);
   return out;
 }
 

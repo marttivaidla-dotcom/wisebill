@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import type { Account, Invoice, InvoiceDirection, RegisterEntry } from "../types";
+import type { Account, Invoice, InvoiceDirection, RegisterEntry, Supplier } from "../types";
 import { guessType } from "../accounts";
 import { round2 } from "../vat";
 import { addDays, emptyInvoice, makeRow, parseDate, parseNumber } from "./common";
@@ -135,6 +135,73 @@ export function parseAccounts(buf: Buffer, filename: string): Account[] {
     out.push({ code, name: str(r, "name"), type: guessType(code, str(r, "type")) });
   }
   if (!out.length) throw new Error("Kontoplaanist ei leitud ühtegi kontot");
+  return out;
+}
+
+// ---------- Booksi kontaktid / tarnijad (kood + kulukonto) ----------
+
+// Booksi kontaktide registri (CUVc) väljad: Kood, Nimi, Reg.nr.1, KMKR nr., Pangakonto, Kulukonto
+const CONTACT_COLUMNS: Columns = {
+  code: ["kood", "kontakti kood", "tarnija kood", "hankija kood", "code"],
+  name: ["nimi", "nimetus", "tarnija", "hankija", "name"],
+  regNumber: ["reg nr 1", "reg nr", "registrikood", "reg kood", "regkood", "regnr1"],
+  vatNumber: ["kmkr nr", "kmkr", "vatnr", "vat no"],
+  iban: ["pangakonto", "iban", "bankaccount"],
+  account: ["kulukonto", "acccost", "ostukonto", "konto"],
+};
+
+/**
+ * Booksi aruanne "Kontaktide nimekiri" (prinditav): iga kontakt on mitmerealine plokk –
+ * esimesel real kood + nimi, järgmistel aadress ja sildid "Reg.nr.: …", "KMKR nr.: …". Kulukontot seal pole.
+ */
+function parseContactReport(grid: unknown[][]): Supplier[] | null {
+  const head = (grid[0] ?? []).map((c) => norm(String(c)));
+  if (head[0] !== "kliendi nr" || head[1] !== "nimi") return null;
+  const out: Supplier[] = [];
+  let cur: Supplier | null = null;
+  const cellsOf = (r: unknown[] | undefined) => (r ?? []).map((c) => String(c ?? "").trim());
+  for (let i = 1; i < grid.length; i++) {
+    const cells = cellsOf(grid[i]);
+    // Uus plokk: kood + nimi, järgmisel real "Tel:" (aadressi jätkuread on ka kahes veerus – neid mitte)
+    if (cells[0] && cells[1] && /^Tel:/i.test(cellsOf(grid[i + 1])[1] ?? "")) {
+      cur = { code: cells[0], name: cells[1], regNumber: "" };
+      out.push(cur);
+      continue;
+    }
+    if (!cur) continue;
+    for (const c of cells) {
+      const reg = c.match(/^Reg\.?\s*nr\.?:\s*(\S+)/i);
+      if (reg) cur.regNumber = reg[1];
+      const vat = c.match(/^KMKR\s*nr\.?:\s*(\S+)/i);
+      if (vat) cur.vatNumber = vat[1].toUpperCase();
+    }
+  }
+  return out;
+}
+
+/** Booksi kontaktide (tarnijate) eksport -> tarnijad koos seotud kulukontoga. */
+export function parseSuppliers(buf: Buffer, filename: string): Supplier[] {
+  const wb = XLSX.read(buf, { type: "buffer", raw: /\.(csv|txt)$/i.test(filename), codepage: 65001 });
+  const report = parseContactReport(XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: "" }));
+  if (report) {
+    if (!report.length) throw new Error("Aruandest ei leitud ühtegi kontakti");
+    return report;
+  }
+  const { rows, str } = readTable(buf, filename, CONTACT_COLUMNS, 2, "nt Kood, Nimi, Reg.nr.1, Kulukonto");
+  const out: Supplier[] = [];
+  for (const r of rows) {
+    const name = str(r, "name");
+    if (!name) continue;
+    out.push({
+      code: str(r, "code"),
+      name,
+      regNumber: str(r, "regNumber").replace(/\s/g, ""),
+      vatNumber: str(r, "vatNumber").replace(/\s/g, "").toUpperCase() || undefined,
+      iban: str(r, "iban").replace(/\s/g, "").toUpperCase() || undefined,
+      account: str(r, "account") || undefined,
+    });
+  }
+  if (!out.length) throw new Error("Failist ei leitud ühtegi tarnijat");
   return out;
 }
 

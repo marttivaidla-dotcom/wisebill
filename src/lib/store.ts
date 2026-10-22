@@ -39,8 +39,7 @@ interface CompanyRow {
   address: string | null;
   iban: string | null;
   accounts: Company["accounts"];
-  default_expense_account: string | null;
-  default_income_account: string | null;
+  suppliers: Company["suppliers"] | null;
   billberry: Company["billberry"] | null;
 }
 
@@ -52,8 +51,7 @@ const fromRow = (r: CompanyRow): Company => ({
   address: r.address ?? undefined,
   iban: r.iban ?? undefined,
   accounts: r.accounts ?? [],
-  defaultExpenseAccount: r.default_expense_account ?? undefined,
-  defaultIncomeAccount: r.default_income_account ?? undefined,
+  suppliers: r.suppliers ?? [],
   billberry: r.billberry ?? undefined,
 });
 
@@ -64,8 +62,7 @@ const toRow = (c: Company): Omit<CompanyRow, "id"> => ({
   address: c.address || null,
   iban: c.iban || null,
   accounts: c.accounts,
-  default_expense_account: c.defaultExpenseAccount || null,
-  default_income_account: c.defaultIncomeAccount || null,
+  suppliers: c.suppliers ?? [],
   billberry: c.billberry ?? null,
 });
 
@@ -80,7 +77,7 @@ interface RegisterRow {
   added_at: string;
 }
 
-const COMPANY_COLS = "id, name, reg_number, vat_number, address, iban, accounts, default_expense_account, default_income_account, billberry";
+const COMPANY_COLS = "id, name, reg_number, vat_number, address, iban, accounts, suppliers, billberry";
 
 /** Supabase'i viga -> eestikeelne Error. */
 function check<T>(r: { data: T; error: { message: string } | null }): T {

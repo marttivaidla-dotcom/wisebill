@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/supabase/server";
-import { parseAccounts, parseRegister, parseSpreadsheet } from "@/lib/parsers/spreadsheet";
+import { parseAccounts, parseRegister, parseSpreadsheet, parseSuppliers } from "@/lib/parsers/spreadsheet";
 import { parseInvoiceText } from "@/lib/parsers/text";
 import type { Invoice, InvoiceDirection } from "@/lib/types";
 
@@ -15,6 +15,7 @@ const MAX_BYTES = 4 * 1024 * 1024;
  *  - file: Excel/CSV/PDF   VÕI   text: brauseris OCR-itud tekst (pildid)
  *  - direction: "sales" | "purchase"
  *  - kind: "invoice" (vaikimisi) | "accounts" (kontoplaan) | "register" (Booksi arvete nimekiri)
+ *          | "suppliers" (Booksi kontaktid koos kulukontoga)
  */
 export async function POST(req: Request) {
   const auth = await requireUser();
@@ -37,12 +38,14 @@ export async function POST(req: Request) {
     const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
     const kind = String(form.get("kind") ?? "invoice");
     const isSheet = ["xlsx", "xls", "csv", "ods"].includes(ext);
-    if (kind === "accounts" || kind === "register") {
+    if (kind === "accounts" || kind === "register" || kind === "suppliers") {
       if (!isSheet) return NextResponse.json({ error: "Oodatud Excel või CSV fail" }, { status: 415 });
       return NextResponse.json(
         kind === "accounts"
           ? { accounts: parseAccounts(buf, file.name) }
-          : { entries: parseRegister(buf, file.name, direction) },
+          : kind === "suppliers"
+            ? { suppliers: parseSuppliers(buf, file.name) }
+            : { entries: parseRegister(buf, file.name, direction) },
       );
     }
     let invoices: Invoice[];

@@ -31,8 +31,7 @@ create table if not exists public.companies (
   address text,
   iban text,
   accounts jsonb not null default '[]',                -- kontoplaan [{code, name, type}]
-  default_expense_account text,
-  default_income_account text,
+  suppliers jsonb not null default '[]',               -- Booksi tarnijad [{code, name, regNumber, vatNumber, iban, account}]
   billberry jsonb,                                       -- {env, keyId, key, checkedAt}
   mappings jsonb not null default '{"parties":{},"articles":{},"accounts":{}}', -- õpitud koodid/kontod
   created_by uuid references public.profiles on delete set null,

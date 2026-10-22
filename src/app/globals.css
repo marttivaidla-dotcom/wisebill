@@ -183,3 +183,4 @@ code.password { font-size: 18px; padding: 2px 8px; border-radius: 6px; backgroun
 .card.narrow { max-width: 480px; }
 table.users td { padding: 8px 12px 8px 0; border-top: 1px solid var(--border); }
 .row-actions { text-align: right; white-space: nowrap; }
+table.suppliers td { padding: 3px 8px 3px 0; } table.suppliers td input { width: 120px; }

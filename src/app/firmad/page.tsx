@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { Account, AccountType, BillberrySettings, Company, InvoiceDirection, RegisterEntry } from "@/lib/types";
+import type { Account, AccountType, BillberrySettings, Company, InvoiceDirection, RegisterEntry, Supplier } from "@/lib/types";
 import { STATUS_LABELS, type RegistryCompany, type RegistryDetails } from "@/lib/ariregister";
 import { TEMPLATE_ACCOUNTS, accountsFor } from "@/lib/accounts";
 import { companyIssues } from "@/lib/readiness";
@@ -182,7 +182,7 @@ function CompanyEditor({ company, others, onSave, onDelete, onLeft }: {
   const err = (field: string) => issues.find((i) => i.field === field)?.message;
   const required = issues.filter((i) => i.required);
   const detailsDone = !err("name") && !err("regNumber");
-  const accountsDone = !err("accounts") && !err("defaultExpenseAccount");
+  const accountsDone = !err("accounts");
 
   const set = <K extends keyof Company>(k: K, v: Company[K]) => onSave({ ...company, [k]: v });
   const setAccounts = (accounts: Account[]) =>
@@ -221,7 +221,6 @@ function CompanyEditor({ company, others, onSave, onDelete, onLeft }: {
     .filter(({ a }) => !filter || `${a.code} ${a.name}`.toLowerCase().includes(filter.toLowerCase()));
   const count = (src: RegisterEntry["source"], dir: InvoiceDirection) =>
     register.filter((e) => e.source === src && e.direction === dir).length;
-  const toOptions = (list: Account[]) => list.map((a) => ({ value: a.code, label: `${a.code} ${a.name}` }));
 
   return (
     <div className="stack">
@@ -250,7 +249,7 @@ function CompanyEditor({ company, others, onSave, onDelete, onLeft }: {
         </div>
       </Step>
 
-      <Step n={2} title="Kontoplaan ja vaikimisi kontod" state={accountsDone ? "done" : "todo"}>
+      <Step n={2} title="Kontoplaan" state={accountsDone ? "done" : "todo"}>
         {!company.accounts.length ? (
           <div className="callout err">
             <b>Kontoplaan puudub.</b> Ilma selleta ei tea WiseBill, millisele kontole arve read panna. Vali üks:
@@ -275,15 +274,6 @@ function CompanyEditor({ company, others, onSave, onDelete, onLeft }: {
 
         {company.accounts.length > 0 && (
           <>
-            <div className="form-grid">
-              <Select label="Vaikimisi kulukonto" required value={company.defaultExpenseAccount ?? ""}
-                error={err("defaultExpenseAccount")} hint="Ostuarve ridadele, kui hankija jaoks pole konto õpitud"
-                options={toOptions(accountsFor(company.accounts, "purchase"))} onChange={(v) => set("defaultExpenseAccount", v)} />
-              <Select label="Vaikimisi tulukonto" value={company.defaultIncomeAccount ?? ""}
-                hint="Müügiarve ridadele" options={toOptions(accountsFor(company.accounts, "sales"))}
-                onChange={(v) => set("defaultIncomeAccount", v)} />
-            </div>
-
             <details className="accounts">
               <summary>Vaata ja muuda kontosid ({company.accounts.length})</summary>
               <input placeholder="Otsi kontot koodi või nime järgi…" value={filter} onChange={(e) => setFilter(e.target.value)} className="search" />
@@ -312,9 +302,11 @@ function CompanyEditor({ company, others, onSave, onDelete, onLeft }: {
         )}
       </Step>
 
+      <SuppliersStep company={company} onSave={onSave} />
+
       <BillberryStep company={company} onSave={onSave} />
 
-      <Step n={4} title="Booksis juba olevad arved (duplikaatide kontroll)" state="optional">
+      <Step n={5} title="Booksis juba olevad arved (duplikaatide kontroll)" state="optional">
         <p className="hint">
           WiseBillist saadetud arved jäetakse meelde automaatselt. Et ka Booksi käsitsi sisestatud arveid topelt ei imporditaks,
           ekspordi Booksist ost- või müügiarvete nimekiri Excelisse (veerud nt Arve nr, Hankija/Klient, Kuupäev, Summa) ja lae see siia.
@@ -392,7 +384,7 @@ function MembersStep({ company, onLeft }: { company: Company; onLeft: () => void
   }
 
   return (
-    <Step n={5} title="Kellel on ligipääs" state="optional">
+    <Step n={6} title="Kellel on ligipääs" state="optional">
       <p className="hint">Kõik liikmed näevad ja muudavad firmat ning saadavad selle arveid. Uue kasutaja lisab admin lehel Kasutajad.</p>
       <ul className="members">
         {members.map((m) => (
@@ -489,6 +481,101 @@ function RegistrySearch({ company, onSave, error }: { company: Company; onSave: 
   );
 }
 
+/** Uus fail täiendab olemasolevat nimekirja koodi (või reg.koodi) järgi; tühi väli uues failis vana väärtust ei kustuta. */
+function mergeSuppliers(old: Supplier[], incoming: Supplier[]): Supplier[] {
+  const id = (s: Supplier) => s.code || s.regNumber || s.name;
+  const map = new Map(old.map((s) => [id(s), s]));
+  for (const s of incoming) {
+    const prev = map.get(id(s));
+    map.set(id(s), prev
+      ? { ...prev, ...Object.fromEntries(Object.entries(s).filter(([, v]) => v !== undefined && v !== "")) } as Supplier
+      : s);
+  }
+  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, "et"));
+}
+
+/** Booksi tarnijad ja nende kulukontod: arve read saavad konto tarnija järgi. */
+function SuppliersStep({ company, onSave }: { company: Company; onSave: (c: Company) => void }) {
+  const [msg, setMsg] = useState("");
+  const [filter, setFilter] = useState("");
+  const list = company.suppliers ?? [];
+  const listId = `sup-acc-${company.id}`;
+  const accountErr = (s: Supplier) =>
+    !s.account ? "Kulukonto puudub" : company.accounts.length && !company.accounts.some((a) => a.code === s.account) ? "Kontot pole kontoplaanis" : "";
+  const missing = list.filter((s) => accountErr(s)).length;
+  const setList = (suppliers: Supplier[]) => onSave({ ...company, suppliers });
+  const edit = (s: Supplier, patch: Partial<Supplier>) => setList(list.map((x) => (x === s ? { ...x, ...patch } : x)));
+
+  async function importFile(file: File) {
+    try {
+      const { suppliers } = await postFile<{ suppliers: Supplier[] }>(file, { kind: "suppliers" });
+      setList(mergeSuppliers(list, suppliers));
+      const withAcc = suppliers.filter((s) => s.account).length;
+      setMsg(`${file.name}: ${suppliers.length} tarnijat` + (withAcc ? `, neist ${withAcc} kulukontoga` : " – failis polnud kulukontosid, vali need allpool"));
+    } catch (e) {
+      setMsg(`Viga: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
+  const shown = list.filter((s) => !filter || `${s.code} ${s.name} ${s.regNumber}`.toLowerCase().includes(filter.toLowerCase()));
+  return (
+    <Step n={3} title="Tarnijad ja kulukontod" state={!list.length ? "optional" : missing ? "todo" : "done"}>
+      <p className="hint">
+        Nagu Booksis: iga tarnija on seotud kulukontoga. Ostuarve read saavad konto tarnija järgi, Booksi tarnija kood
+        läheb arvele kaasa. Tarnija leitakse registrikoodi, KMKR-i või nime järgi.
+      </p>
+      <div className="actions">
+        <label className="button">
+          Lae Booksi kontaktid (Excel)
+          <input type="file" hidden accept=".xlsx,.xls,.csv,.ods" onChange={(e) => (e.target.files?.[0] && importFile(e.target.files[0]), (e.target.value = ""))} />
+        </label>
+        {list.length > 0 && (
+          <button className="link danger" onClick={() => confirm("Eemalda kõik tarnijad?") && setList([])}>Tühjenda nimekiri</button>
+        )}
+      </div>
+      <p className="hint">
+        Sobib Booksi aruanne <i>Kontaktide nimekiri</i> (kood, nimi, reg.nr, KMKR) või kontaktide registri eksport veergudega
+        <b> Kood, Nimi, Reg.nr.1, KMKR nr., Kulukonto</b>. Uus fail täiendab olemasolevat nimekirja.
+      </p>
+      {msg && <p className={msg.startsWith("Viga") ? "callout err" : "status"}>{msg}</p>}
+      {missing > 0 && <p className="callout err"><b>{missing} tarnijal puudub kulukonto.</b> Vali konto punaste ridade juures.</p>}
+
+      {list.length > 0 && (
+        <>
+          <datalist id={listId}>
+            {accountsFor(company.accounts, "purchase").map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
+          </datalist>
+          {list.length > 8 && <input placeholder="Otsi tarnijat…" value={filter} onChange={(e) => setFilter(e.target.value)} className="search" />}
+          <div className="table-wrap">
+            <table className="compact suppliers">
+              <thead><tr><th>Booksi kood</th><th>Nimi</th><th>Reg.nr</th><th>KMKR</th><th>Kulukonto *</th><th></th></tr></thead>
+              <tbody>
+                {shown.map((s) => {
+                  const e = accountErr(s);
+                  return (
+                    <tr key={s.code || s.regNumber || s.name}>
+                      <td>{s.code}</td>
+                      <td>{s.name}</td>
+                      <td>{s.regNumber}</td>
+                      <td>{s.vatNumber}</td>
+                      <td>
+                        <input list={listId} value={s.account ?? ""} placeholder="vali konto" className={e ? "invalid" : ""}
+                          title={e || company.accounts.find((a) => a.code === s.account)?.name || ""}
+                          onChange={(ev) => edit(s, { account: ev.target.value.trim() || undefined })} />
+                      </td>
+                      <td><button className="link danger" title="Eemalda tarnija" onClick={() => setList(list.filter((x) => x !== s))}>×</button></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </Step>
+  );
+}
+
 function BillberryStep({ company, onSave }: { company: Company; onSave: (c: Company) => void }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
@@ -511,7 +598,7 @@ function BillberryStep({ company, onSave }: { company: Company; onSave: (c: Comp
 
   const filled = !!bb.keyId && !!bb.key;
   return (
-    <Step n={3} title="Ostuarvete saatmine Booksi (Billberry)" state={bb.checkedAt ? "done" : "optional"}>
+    <Step n={4} title="Ostuarvete saatmine Booksi (Billberry)" state={bb.checkedAt ? "done" : "optional"}>
       <p className="hint">
         Valikuline. Billberry kaudu lähevad ostuarved ühe nupuvajutusega Booksi. Ilma selleta saad arved alla laadida
         XML-failina. Võtme saad Billberrys: <b>Konto ja seaded → API võtmed → Loo uus võti</b>.
