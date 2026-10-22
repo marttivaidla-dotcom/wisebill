@@ -1,4 +1,4 @@
-import type { Invoice, InvoiceDirection, InvoiceRow } from "../types";
+import type { Invoice, InvoiceRow } from "../types";
 import { recalcRow } from "../vat";
 
 export const DEFAULT_VAT = 24; // Eesti KM standardmäär alates 01.07.2025
@@ -45,10 +45,9 @@ export function addDays(iso: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-export function emptyInvoice(source: string, direction: InvoiceDirection): Invoice {
+export function emptyInvoice(source: string): Invoice {
   return {
     id: Math.random().toString(36).slice(2, 10),
-    direction,
     number: "",
     date: "",
     dueDate: "",
@@ -63,8 +62,6 @@ export function emptyInvoice(source: string, direction: InvoiceDirection): Invoi
 
 export function makeRow(p: Partial<InvoiceRow>): InvoiceRow {
   return recalcRow({
-    articleCode: p.articleCode ?? "",
-    account: p.account ?? "",
     description: p.description ?? "",
     quantity: Number.isFinite(p.quantity) ? p.quantity! : 1,
     unit: p.unit || "tk",

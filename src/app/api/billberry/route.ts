@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { requireUser } from "@/lib/supabase/server";
 import { BILLBERRY_HOSTS, Billberry, type BillberryEnv } from "@/lib/billberry";
 
 // Vahendaja Billberry API-le (brauserist otse ei saa – CORS). Võti tuleb firma seadetest.
@@ -11,18 +10,16 @@ const MAX_XML = 1024 * 1024;
 /**
  * POST JSON { env: "test" | "production", keyId, key, action: "check" | "upload", xml? }
  *  - check  -> kas võti kehtib
- *  - upload -> üks ostuarve XML Billberrysse (sealt Booksi)
+ *  - upload -> üks ostuarve XML Billberrysse (POST /invoices/received)
  */
 export async function POST(req: Request) {
-  const auth = await requireUser();
-  if (auth instanceof NextResponse) return auth;
   try {
     const body = await req.json();
     const env = String(body.env) as BillberryEnv;
     const keyId = String(body.keyId ?? "").trim();
     const key = String(body.key ?? "").trim();
     if (!(env in BILLBERRY_HOSTS) || !keyId || !key)
-      return NextResponse.json({ error: "Firma Billberry võti puudub – lisa see lehel Firmad (samm 3)" }, { status: 400 });
+      return NextResponse.json({ error: "Firma Billberry võti puudub – lisa see lehel Firmad" }, { status: 400 });
 
     const bb = new Billberry({ env, keyId, key });
     let r;

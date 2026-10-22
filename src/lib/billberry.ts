@@ -1,7 +1,8 @@
 /**
- * Billberry (e-arve operaator) – ostuarve saatmine Booksi.
+ * Billberry (e-arve operaator) – ostuarve üleslaadimine.
  * Firma oma API võti (Billberry: Konto ja seaded -> API võtmed) + POST /invoices/received.
- * Billberry kontrollib, et <Invoice regNumber> = võtme firma registrikood, ja toimetab arve Booksi.
+ * Billberry kontrollib, et <Invoice regNumber> = võtme firma registrikood. Arve jääb firma
+ * Billberry kontole saabunud arvete alla (sealt loeb selle firma raamatupidamistarkvara).
  * Kutsutakse serverist (/api/billberry), sest Billberry API ei luba brauseri päringuid (CORS).
  */
 
@@ -44,6 +45,9 @@ function hintFor(status: number, message: string): string {
   if (status === 401) return "Billberry ei tunne seda võtit. Kontrolli võtme ID-d, võtit ja keskkonda (test / päris).";
   if (status === 403) return "Arve ostja registrikood ei ühti Billberry võtme firmaga.";
   if (/Duplicate/.test(message)) return "See arve on juba saadetud.";
+  if (/Doesn't Accept/.test(message)) return "Firma ei võta e-arveid vastu üheski e-arve operaatoris.";
+  if (/Multiple/.test(message)) return "Billberry ootab ühte arvet faili kohta.";
+  if (status === 415) return "Billberry ei toeta seda failitüüpi (oodatud e-arve XML).";
   if (/Parsing Failed|Empty|Unknown XML|Missing E-Invoice/.test(message)) return "Billberry ei suutnud e-arve XML-i lugeda.";
   if (/Timeout$/.test(message) || status >= 500) return "Billberry ei vastanud. Proovi hiljem uuesti.";
   return "Billberry lükkas arve tagasi.";

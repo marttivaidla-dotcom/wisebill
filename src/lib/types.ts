@@ -1,25 +1,22 @@
-// Ühtne arve mudel, millesse kõik parserid (Excel/CSV, PDF, OCR) tulemuse viivad
-// ja millest eksport (e-arve XML, hiljem Books REST API) loeb.
-
-export type InvoiceDirection = "sales" | "purchase"; // müügiarve | ostuarve
+/**
+ * Ühtne arve mudel: parser (PDF/OCR) -> eelvaade -> e-arve XML -> Billberry.
+ * Kõik arved on ostuarved: müüja = tarnija, ostja = valitud firma.
+ */
 
 export interface Party {
   name: string;
-  regNumber: string; // registrikood (Booksis kliendi/hankija vastendamise võti)
-  vatNumber?: string; // KMKR nr, nt EE100000000
-  code?: string; // Booksi kliendi/hankija kood (mapping)
+  regNumber: string; // registrikood
+  vatNumber?: string; // KMKR nr
   iban?: string;
 }
 
 export interface InvoiceRow {
-  articleCode: string; // Booksi artikli kood (mapping)
-  account: string; // kontoplaani konto (ostuarvel kulukonto, müügiarvel tulukonto)
   description: string;
   quantity: number;
   unit: string;
-  unitPrice: number; // ühiku hind ilma KM-ta
-  vatRate: number; // protsentides: 24, 13, 9, 0 ...
-  // Arvutatakse recalc() abil – ei loeta failist pimesi üle
+  unitPrice: number; // ilma KM-ta
+  vatRate: number; // nt 24, 13, 9, 0
+  // arvutatud väljad (vat.ts)
   net: number;
   vat: number;
   gross: number;
@@ -27,21 +24,19 @@ export interface InvoiceRow {
 
 export interface Invoice {
   id: string; // sisemine id (eelvaate jaoks)
-  direction: InvoiceDirection;
   number: string;
   date: string; // YYYY-MM-DD
   dueDate: string; // YYYY-MM-DD
   currency: string;
-  seller: Party;
-  buyer: Party;
+  seller: Party; // tarnija
+  buyer: Party; // valitud firma
   rows: InvoiceRow[];
   referenceNumber?: string; // viitenumber
-  notes?: string;
   source: string; // failinimi, millest arve tuli
   warnings: string[]; // parseri hoiatused, mida kasutaja peab eelvaates kontrollima
   allowDuplicate?: boolean; // kasutaja kinnitas, et see pole duplikaat
   sendError?: string; // viimase Billberrysse saatmise viga
-  // PDF/OCR: kõik dokumendist leitud firmad ja IBAN-id – prepareForCompany valib, kumb on oma firma
+  // Kõik dokumendist leitud firmad ja IBAN-id – prepareForCompany valib, kumb on oma firma
   candidates?: { parties: Party[]; ibans: string[] };
 }
 
@@ -54,59 +49,34 @@ export interface VatBreakdown {
 export interface InvoiceTotals {
   net: number;
   vat: number;
-  gross: number; // Booksi PayVal
+  gross: number;
   byRate: VatBreakdown[];
 }
 
-// ---------- Firmad ja kontoplaanid ----------
-
-export type AccountType = "vara" | "kohustus" | "omakapital" | "tulu" | "kulu";
-
-export interface Account {
-  code: string; // nt "4000"
-  name: string; // nt "Kaubad ja materjalid"
-  type: AccountType;
+export interface BillberrySettings {
+  env: "test" | "production";
+  keyId: string;
+  key: string;
+  checkedAt?: string; // viimane õnnestunud ühenduse kontroll
 }
 
-/** Firma, kelle arveid imporditakse (iga firma = eraldi Booksi andmebaas). */
+/** Firma, kelle ostuarveid Billberrysse saadetakse (ostja e-arvel). */
 export interface Company {
   id: string;
   name: string;
   regNumber: string;
   vatNumber?: string;
-  address?: string; // juriidiline aadress (äriregistrist)
-  iban?: string;
-  accounts: Account[]; // kontoplaan
-  suppliers?: Supplier[]; // Booksi tarnijad ja nende kulukontod
-  billberry?: BillberrySettings; // firma Billberry API võti – ostuarved Billberry kaudu Booksi
+  address?: string;
+  billberry?: BillberrySettings; // firma enda Billberry API võti
 }
 
-/** Firma Billberry API võti (Billberry: Konto ja seaded -> API võtmed). */
-export interface BillberrySettings {
-  env: "test" | "production"; // test = dev.billberry.ee, päris = app.billberry.ee
-  keyId: string;
-  key: string;
-  checkedAt?: string; // viimane edukas ühenduse kontroll
-}
-
-/** Booksi kontakt (tarnija) koos seotud kulukontoga – Booksi kontaktide registri (CUVc) ekspordist. */
-export interface Supplier {
-  code: string; // Booksi kontakti kood
-  name: string;
-  regNumber: string; // Reg.nr.1
-  vatNumber?: string; // KMKR nr.
-  iban?: string; // Pangakonto
-  account?: string; // Kulukonto (AccCost)
-}
-
-/** Juba imporditud (või Booksis olemasolev) arve – duplikaatide kontrolliks. */
-export interface RegisterEntry {
-  direction: InvoiceDirection;
-  partyRegNumber: string; // vastaspoole registrikood
-  partyName: string;
+/** Billberrysse saadetud arve – duplikaatide kontrolliks. */
+export interface SentEntry {
+  sellerRegNumber: string;
+  sellerName: string;
   number: string;
   date: string;
   gross: number;
-  source: "wisebill" | "books"; // eksporditud siit või laetud Booksi registrist
-  addedAt: string;
+  billberryId?: number; // Billberry arve id
+  sentAt: string;
 }

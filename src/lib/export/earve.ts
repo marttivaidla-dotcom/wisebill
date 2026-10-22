@@ -2,14 +2,10 @@ import type { Invoice } from "../types";
 import { totals } from "../vat";
 
 /**
- * Eesti e-arve standard v1.2 (E_Invoice) XML – formaat, mida Excellent Books impordib
- * (Müügiarved / Ostuarved -> Funktsioonid -> Impordid -> E-arve).
- *
+ * Eesti e-arve standard v1.2 (E_Invoice) XML – ostuarve Billberrysse (POST /invoices/received).
  * NB! XSD nõuab elementide kindlat järjekorda – ära muuda järjekorda allpool.
- * Booksi vastendused:
- *  - klient/hankija leitakse registrikoodi (RegNumber) järgi; serviceId = Booksi kliendikood
- *  - artikkel leitakse SellerProductId järgi (= Booksi artikli kood)
- *  - numbriseeria: InvoiceNumber peab mahtuma Booksi impordi numbriseeriasse
+ * Billberry nõuded: <Invoice regNumber> = ostja = API võtme firma, sellerRegnumber = <SellerParty><RegNumber>,
+ * Header: FileId ≤ 20 märki, Version "1.2". Üks arve faili kohta.
  */
 
 const esc = (s: string | number | undefined) =>
@@ -43,12 +39,6 @@ function invoiceXml(inv: Invoice): string {
       (r, i) =>
         `<ItemEntry>` +
         tag("RowNo", i + 1) +
-        tag("SellerProductId", r.articleCode) +
-        // Kulu-/tulukonto ostja kontoplaanist (XSD: Accounting tuleb enne Description'it)
-        (r.account
-          ? `<Accounting><JournalEntry>${tag("GeneralLedger", r.account)}<Sum>${amt(r.net)}</Sum>` +
-            `<VatSum>${amt(r.vat)}</VatSum><VatRate>${amt(r.vatRate)}</VatRate></JournalEntry></Accounting>`
-          : "") +
         tag("Description", r.description) +
         `<ItemDetailInfo>${tag("ItemUnit", r.unit)}${tag("ItemAmount", qty(r.quantity))}${tag("ItemPrice", amt(r.unitPrice))}</ItemDetailInfo>` +
         tag("ItemSum", amt(r.net)) +
@@ -67,7 +57,7 @@ function invoiceXml(inv: Invoice): string {
 
   const payer = inv.buyer;
   return (
-    `<Invoice invoiceId="${esc(inv.number)}" serviceId="${esc(payer.code || payer.regNumber)}" ` +
+    `<Invoice invoiceId="${esc(inv.number)}" ` +
     `regNumber="${esc(payer.regNumber)}" sellerRegnumber="${esc(inv.seller.regNumber)}">` +
     `<InvoiceParties>${party("SellerParty", inv.seller)}${party("BuyerParty", inv.buyer)}</InvoiceParties>` +
     `<InvoiceInformation>` +
@@ -104,14 +94,14 @@ function invoiceXml(inv: Invoice): string {
   );
 }
 
-/** Koostab ühe e-arve faili (võib sisaldada mitut arvet). */
+/** Koostab e-arve faili (Billberrysse saadetakse üks arve faili kohta). */
 export function buildEInvoiceXml(invoices: Invoice[], now = new Date()): string {
   const total = invoices.reduce((s, inv) => s + totals(inv).gross, 0);
   const body = invoices.map(invoiceXml).join("\n");
   return (
     `<?xml version="1.0" encoding="UTF-8"?>\n` +
     `<E_Invoice xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="e-invoice_ver1.2.xsd">\n` +
-    `<Header><Date>${now.toISOString().slice(0, 10)}</Date><FileId>WB${now.getTime()}</FileId><Version>1.2</Version></Header>\n` +
+    `<Header><Date>${now.toISOString().slice(0, 10)}</Date><FileId>WB${now.getTime()}</FileId><AppId>WISEBILL</AppId><Version>1.2</Version></Header>\n` +
     `${body}\n` +
     `<Footer><TotalNumberInvoices>${invoices.length}</TotalNumberInvoices><TotalAmount>${amt(total)}</TotalAmount></Footer>\n` +
     `</E_Invoice>\n`

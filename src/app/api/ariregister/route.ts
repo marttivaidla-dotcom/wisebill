@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { requireUser } from "@/lib/supabase/server";
 import { companyDetails, searchCompanies } from "@/lib/ariregister";
 
 export const runtime = "nodejs";
@@ -8,11 +7,9 @@ export const maxDuration = 30;
 /**
  * GET ?q=nimi või kood -> { companies }   (otsing, nt firma nime sisestamisel)
  * GET ?code=12345678   -> { company }     (rekvisiidid koos KMKR-iga)
- * Avalikud andmed, aga ainult sisselogitud kasutajale (et rakendus poleks avalik äriregistri vahendaja).
+ * Avalikud andmed, aga ainult parooliga kasutajale (src/proxy.ts) – rakendus ei ole avalik äriregistri vahendaja.
  */
 export async function GET(req: Request) {
-  const auth = await requireUser();
-  if (auth instanceof NextResponse) return auth;
   const params = new URL(req.url).searchParams;
   try {
     const code = params.get("code");

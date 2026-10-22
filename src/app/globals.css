@@ -111,8 +111,6 @@ button.full { width: 100%; margin-top: 8px; }
 .danger-zone { text-align: right; }
 dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 10px 0; }
 dl.facts dt { color: var(--muted); } dl.facts dd { margin: 0; font-weight: 600; }
-details.accounts { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
-details.accounts summary { cursor: pointer; font-weight: 600; color: var(--accent); }
 .search { margin: 10px 0; max-width: 360px; }
 
 /* ---------- Üleslaadimine ---------- */
@@ -133,7 +131,7 @@ details.accounts summary { cursor: pointer; font-weight: 600; color: var(--accen
 @media (max-width: 760px) { .parties { grid-template-columns: 1fr; } }
 .parties .own { background: var(--bg); border-radius: 8px; padding: 0 14px 12px; }
 .table-wrap { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; min-width: 900px; }
+table { width: 100%; border-collapse: collapse; min-width: 760px; }
 th { text-align: left; font-size: 12.5px; color: var(--muted); font-weight: 600; padding: 4px; white-space: nowrap; }
 td { padding: 3px 4px; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -159,28 +157,12 @@ table.stats td, table.stats th { padding: 4px 16px 4px 0; }
 .suggestions button:hover { background: var(--bg); }
 .suggestions small { display: block; color: var(--muted); }
 .suggestions .pad { padding: 8px 10px; }
-table.rows td:nth-child(2) input, table.rows td:nth-child(3) input { width: 110px; }
-table.rows td:nth-child(4) input { width: 80px; }
-table.rows td:nth-child(5) input { width: 70px; }
-table.rows td:nth-child(6) input { width: 110px; }
-table.rows td:nth-child(7) select { width: 76px; }
+table.rows td:nth-child(2) input { width: 80px; }
+table.rows td:nth-child(3) input { width: 70px; }
+table.rows td:nth-child(4) input { width: 110px; }
+table.rows td:nth-child(5) select { width: 76px; }
 
-/* ---------- Kasutajad ja sisselogimine ---------- */
+/* ---------- Sisselogimine ---------- */
 .login { max-width: 420px; padding-top: 10vh; }
 .login form { display: grid; gap: 14px; }
 .nav-right { margin-left: auto; display: flex; align-items: center; gap: 4px; }
-.nav-right a { font-size: 14px; color: var(--muted); }
-.save-state { font-size: 13px; color: var(--muted); align-self: center; }
-.save-state.saved { color: var(--ok); }
-.save-state.error { color: var(--err); font-weight: 600; }
-.members { list-style: none; padding: 0; margin: 8px 0 12px; border: 1px solid var(--border); border-radius: 8px; }
-.members li { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; border-top: 1px solid var(--border); }
-.members li:first-child { border-top: 0; }
-.add-user { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
-.add-user .field { flex: 1; min-width: 240px; }
-.add-user > button { min-height: 38px; }
-code.password { font-size: 18px; padding: 2px 8px; border-radius: 6px; background: var(--card); border: 1px solid var(--border); user-select: all; }
-.card.narrow { max-width: 480px; }
-table.users td { padding: 8px 12px 8px 0; border-top: 1px solid var(--border); }
-.row-actions { text-align: right; white-space: nowrap; }
-table.suppliers td { padding: 3px 8px 3px 0; } table.suppliers td input { width: 120px; } table.suppliers td input.wide { width: 240px; }

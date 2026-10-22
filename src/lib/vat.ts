@@ -1,9 +1,8 @@
 import type { Company, Invoice, InvoiceRow, InvoiceTotals } from "./types";
 
-// Ümardamine sentideni (half-up), vältides 1.005 -> 1.00 ujukomaviga
 export const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
-/** Arvutab rea neto-, KM- ja brutosumma koguse, hinna ja määra põhjal. */
+/** Rea summad koguse, hinna ja KM määra järgi. */
 export function recalcRow(row: InvoiceRow): InvoiceRow {
   const net = round2(row.quantity * row.unitPrice);
   const vat = round2((net * row.vatRate) / 100);
@@ -12,51 +11,43 @@ export function recalcRow(row: InvoiceRow): InvoiceRow {
 
 /**
  * Arve kogusummad. KM arvutatakse määrade kaupa summalt (mitte ridade KM-ide summana),
- * nagu raamatupidamistarkvara seda teeb – nii ei teki sendierinevust Booksiga.
+ * nagu raamatupidamistarkvara seda teeb.
  */
 export function totals(inv: Invoice): InvoiceTotals {
   const groups = new Map<number, number>();
   for (const r of inv.rows) groups.set(r.vatRate, (groups.get(r.vatRate) ?? 0) + r.net);
   const byRate = [...groups.entries()]
-    .sort((a, b) => b[0] - a[0])
-    .map(([rate, net]) => ({ rate, net: round2(net), vat: round2((net * rate) / 100) }));
+    .sort(([a], [b]) => b - a)
+    .map(([rate, n]) => {
+      const net = round2(n);
+      return { rate, net, vat: round2((net * rate) / 100) };
+    });
   const net = round2(byRate.reduce((s, g) => s + g.net, 0));
   const vat = round2(byRate.reduce((s, g) => s + g.vat, 0));
   return { net, vat, gross: round2(net + vat), byRate };
 }
 
-/** Üks puudus arvel: field = välja võti eelvaates (punaseks märkimiseks), message = selgitus. */
 export interface Issue {
-  field: string; // "number" | "date" | "dueDate" | "seller.name" | "buyer.regNumber" | "rows" | "row.0.account" ...
+  field: string; // "number" | "date" | "dueDate" | "seller.name" | "seller.regNumber" | "rows" | "row.0.description" ...
   message: string;
 }
 
-/**
- * Kontrollid enne eksporti, väljade kaupa.
- * Kui firma on antud, kontrollitakse ridade kontosid selle firma kontoplaani vastu.
- */
+/** Kontrollid enne saatmist, väljade kaupa (Billberry ja e-arve 1.2 nõuded). */
 export function invoiceIssues(inv: Invoice, company?: Company): Issue[] {
   const out: Issue[] = [];
   const add = (field: string, message: string) => out.push({ field, message });
   if (!inv.number.trim()) add("number", "Arve number puudub");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(inv.date)) add("date", "Arve kuupäev puudub või vale formaat");
+  // e-arve: Payable=YES nõuab maksetähtaega
   if (!/^\d{4}-\d{2}-\d{2}$/.test(inv.dueDate)) add("dueDate", "Maksetähtaeg puudub või vale formaat");
-  if (!inv.seller.name.trim()) add("seller.name", "Müüja nimi puudub");
-  if (!inv.buyer.name.trim()) add("buyer.name", "Ostja nimi puudub");
-  // Booksi vastendus: müügiarvel klient peab olema tuvastatav (reg.kood või Booksi kood).
-  // Ostuarvel on hankija reg.kood kohustuslik: e-arve 1.2 sellerRegnumber, Billberry lükkab tühja tagasi.
-  if (inv.direction === "sales" && !inv.buyer.regNumber.trim() && !inv.buyer.code?.trim())
-    add("buyer.regNumber", "Kliendi registrikood või Booksi kood puudub");
-  if (inv.direction === "purchase" && !inv.seller.regNumber.trim()) add("seller.regNumber", "Hankija registrikood puudub");
+  if (!inv.seller.name.trim()) add("seller.name", "Tarnija nimi puudub");
+  // e-arve 1.2: sellerRegnumber on kohustuslik, Billberry lükkab tühja tagasi
+  if (!inv.seller.regNumber.trim()) add("seller.regNumber", "Tarnija registrikood puudub");
+  // Billberry: ostja reg.kood = API võtme firma
+  if (company && inv.buyer.regNumber !== company.regNumber) add("buyer", "Ostja pole valitud firma");
   if (inv.rows.length === 0) add("rows", "Arvel pole ridu");
   inv.rows.forEach((r, i) => {
     if (!r.description.trim()) add(`row.${i}.description`, `Rida ${i + 1}: kirjeldus puudub`);
-    if (inv.direction === "sales" && !r.articleCode.trim())
-      add(`row.${i}.articleCode`, `Rida ${i + 1}: Booksi artikli kood puudub`);
-    if (inv.direction === "purchase" && !r.articleCode.trim() && !r.account.trim())
-      add(`row.${i}.account`, `Rida ${i + 1}: kulukonto (või artikkel) puudub`);
-    if (company && r.account.trim() && !company.accounts.some((a) => a.code === r.account.trim()))
-      add(`row.${i}.account`, `Rida ${i + 1}: konto ${r.account} puudub firma "${company.name}" kontoplaanis`);
   });
   return out;
 }

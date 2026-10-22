@@ -1,21 +1,18 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { AuthGate } from "./auth";
 import { Nav } from "./ui";
 
 export const metadata: Metadata = {
   title: "WiseBill",
-  description: "Algdokumentide teisendamine Excellent Booksi e-arve XML-iks",
+  description: "Ostuarved PDF-ist või pildilt e-arveks ja Billberrysse",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="et">
       <body>
-        <AuthGate>
-          <Nav />
-          {children}
-        </AuthGate>
+        <Nav />
+        {children}
       </body>
     </html>
   );

@@ -3,26 +3,25 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
-import { supabase } from "@/lib/supabase/client";
-import { useMe } from "./auth";
 
-/** Ülemine menüü – samad lingid igal lehel, paremal kasutaja. */
+/** Ülemine menüü – samad lingid igal lehel (sisselogimise lehel peidus). */
 export function Nav() {
   const path = usePathname();
-  const me = useMe();
-  if (!me) return null;
+  if (path === "/login") return null;
   const item = (href: string, label: string) => (
     <Link href={href} className={path === href ? "active" : ""}>{label}</Link>
   );
+  async function logout() {
+    await fetch("/api/login", { method: "DELETE" });
+    location.href = "/login";
+  }
   return (
     <nav className="nav">
       <span className="brand">WiseBill</span>
+      {item("/", "Ostuarved")}
       {item("/firmad", "Firmad")}
-      {item("/", "Arvete import")}
-      {me.isAdmin && item("/kasutajad", "Kasutajad")}
       <span className="nav-right">
-        {item("/konto", me.email)}
-        <button className="link" onClick={() => supabase().auth.signOut()}>Logi välja</button>
+        <button className="link" onClick={logout}>Logi välja</button>
       </span>
     </nav>
   );

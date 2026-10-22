@@ -1,4 +1,4 @@
-import type { Invoice, InvoiceDirection, InvoiceRow, Party } from "../types";
+import type { Invoice, InvoiceRow, Party } from "../types";
 import { round2, totals } from "../vat";
 import { addDays, DEFAULT_VAT, emptyInvoice, makeRow, parseDate, parseNumber } from "./common";
 
@@ -9,7 +9,7 @@ import { addDays, DEFAULT_VAT, emptyInvoice, makeRow, parseDate, parseNumber } f
  *    sobib ka siis, kui sildid ja numbrid on eri veergudes
  *  - read: tabeliread, mille netosummad annavad kokku arve neto
  *  - osapooled: iga registrikoodi ümbrusest nimi ja KMKR. Kumb on oma firma, otsustab prepareForCompany
- *    (inv.candidates), siin on vaikimisi esimene müüja ja teine ostja.
+ *    (inv.candidates), siin on vaikimisi esimene registrikoodiga firma müüja ja teine ostja.
  */
 
 // Summa: kümnendkohad kohustuslikud (2–3), tuhanded tühiku või punktiga. Kuupäevad (30.09.2026) ei sobi.
@@ -182,8 +182,8 @@ function findRows(lines: string[], totalNet: number, rate: number): InvoiceRow[]
   });
 }
 
-export function parseInvoiceText(text: string, filename: string, direction: InvoiceDirection): Invoice {
-  const inv = emptyInvoice(filename, direction);
+export function parseInvoiceText(text: string, filename: string): Invoice {
+  const inv = emptyInvoice(filename);
   const t = text.replace(/\r/g, "").replace(/[  ]+/g, " ");
   const lines = t.split("\n").map((l) => l.trim()).filter(Boolean);
 
