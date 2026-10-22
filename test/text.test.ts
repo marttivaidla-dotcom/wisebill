@@ -136,3 +136,38 @@ test("äriregistri vasted: <vihje> Eesti ees, kustutatud lõpus", () => {
   assert.deepEqual(rankSuggestions("telefon", hits).map((h) => h.name),
     ["Telefon Eesti AS", "Telefon Finance OÜ", "Telefonikeskus OÜ", "Telefon OÜ"]);
 });
+
+// Näidisarve (arvedemo): OCR liidab veerud, tarnija jaluses koos aadressi ja pangaga, 20% KM, "ettemaks" ridades
+const footerColumns = `Ostja: Kuupäev: 26.01.2013
+Firmanimi OÜ Maksetähtaeg: 05.02.2013
+Estonia pst 5 12455 Viivis: 0.25 %
+Reg. nr. 2147483647 Viitenumber: 8684346554
+info@arvedemo.ee
+ARVE NR 1112
+Kauba nimetus Kogus Hind Summa
+E-poe loomine ettemaks 50% 1.00 tk 247,50 247,50
+Logo kujundamine ettemaks 50 % 1.00 tk 47,50 47,50
+Domeeni registreerimine 1.00 tk 10,00 10,00
+Visitkaardid 120 tk ja kujundus 1.00 tk 32,00 32,00
+Hinnapäringuvorm ettemaks 50% 1.00 tk 32,00 32,00
+NELISADA NELIKÜMMEND KAKS EUR JA 80 SENTI
+Summa: 369,00 €
+Käibemaks (20.00%): 73,80 €
+Kokku: 442,80 €
+ULTIMA DESIGN OÜ Väike-Ameerika 8-202 10219 Swedbank 221038494852
+Reg. nr. 11432180 Tel. +372 58004856 IBAN: EE292200221038494852
+KMKR EE101263212 info@ultimadesign.net SWIFT kood: HABAEE2X
+`;
+
+test("jaluse veerud: tarnija nimi enne aadressi, read sõnaga ettemaks, viivis enne tabelit", () => {
+  const inv = prepareForCompany(parseInvoiceText(footerColumns, "e.png"), { id: "c3", name: "Firmanimi OÜ", regNumber: "12345678" });
+  assert.deepEqual([inv.number, inv.date, inv.dueDate, inv.referenceNumber], ["1112", "2013-01-26", "2013-02-05", "8684346554"]);
+  assert.deepEqual([inv.seller.name, inv.seller.regNumber, inv.seller.vatNumber, inv.seller.iban],
+    ["ULTIMA DESIGN OÜ", "11432180", "EE101263212", "EE292200221038494852"]);
+  assert.deepEqual(inv.rows.map((r) => `${r.description}|${r.net}|${r.vatRate}`), [
+    "E-poe loomine ettemaks 50%|247.5|20", "Logo kujundamine ettemaks 50 %|47.5|20", "Domeeni registreerimine|10|20",
+    "Visitkaardid 120 tk ja kujundus|32|20", "Hinnapäringuvorm ettemaks 50%|32|20",
+  ]);
+  assert.equal(totals(inv).gross, 442.8);
+  assert.deepEqual(inv.warnings, []);
+});

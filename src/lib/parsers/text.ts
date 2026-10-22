@@ -85,6 +85,14 @@ function labeledAmount(lines: string[], label: RegExp): number {
   return NaN;
 }
 
+/** "Nimi OÜ <muud veerud>" -> "Nimi OÜ" (ettevõtlusvorm lõpus); vorm ees ("OÜ Nimi") või puudub -> "". */
+function upToLegalForm(l: string): string {
+  const m = l.match(LEGAL_FORM);
+  if (!m || !m.index) return "";
+  const name = l.slice(0, m.index + m[0].length).trim();
+  return /\p{L}{2,}/u.test(name.slice(0, m.index)) && !/\d/.test(name) ? name : "";
+}
+
 /** Nimi registrikoodi rea ümbrusest: samal real enne silti, muidu lähim nimelaadne rida ülal. */
 function nameNear(lines: string[], i: number, before: string): string {
   const clean = (s: string) => s.replace(PARTY_LABEL, "").replace(COLUMN_LABEL, "").replace(/[\s,;(]+$/, "").trim();
@@ -98,8 +106,10 @@ function nameNear(lines: string[], i: number, before: string): string {
       if (v) return v.slice(0, 100);
       continue;
     }
+    // Jaluses on nimi samal real aadressi ja pangaga: "ULTIMA DESIGN OÜ Väike-Ameerika 8-202 … Swedbank …"
+    const named = upToLegalForm(l);
+    if (named && !NOT_NAME.test(named) && !/:\s*\S/.test(named)) return clean(named).slice(0, 100);
     if (l.length > 80 || NOT_NAME.test(l) || /:\s*\S/.test(l) || COUNTRY.test(l)) continue;
-    if (LEGAL_FORM.test(l)) return clean(l).slice(0, 100);
     if (ADDRESS.test(l) || !/\p{L}{3,}/u.test(l)) continue;
     return clean(l).slice(0, 100);
   }
@@ -154,8 +164,11 @@ function findRows(lines: string[], totalNet: number, rate: number): InvoiceRow[]
   const singles: Cand[] = [];
   lines.forEach((l, i) => {
     const a = amountsOf(l, i);
-    // Kokkuvõtte read (Summa, Käibemaks, Kokku …) pole arveread
-    if (!a.length || TOTAL_WORDS.test(l.slice(0, a[0].index))) return;
+    // Kokkuvõtte read algavad kokkuvõtte sõnaga ("Kokku:", "Arve summa", "sh käibemaksuga"); koguse ja ühikuga
+    // rida ("Hinnapäringuvorm ettemaks 50% 1.00 tk 32,00") on arverida
+    if (!a.length) return;
+    const words = l.slice(0, a[0].index).split(/\s+/);
+    if (TOTAL_WORDS.test(words[0]) || (TOTAL_WORDS.test(words.slice(0, 2).join(" ")) && !QTY_UNIT.test(l))) return;
     const v = a.map((x) => x.value);
     // neto, KM, kokku järjest real (nt "Teenus 300,00 € 1 tk 300,00 € 72,00 € 372,00 €")
     for (let k = v.length - 3; k >= 0; k--)
@@ -166,11 +179,14 @@ function findRows(lines: string[], totalNet: number, rate: number): InvoiceRow[]
     singles.push({ line: i, net: v[v.length - 1], amounts: a });
   });
 
+  // Järjestikused read, mille netod annavad kokku arve neto (enne tabelit võib olla muid numbreid, nt "Viivis 0.25 %")
   const pick = (cands: Cand[]) => {
-    let sum = 0;
-    for (let k = 0; k < cands.length; k++) {
-      sum += cands[k].net;
-      if (near(sum, totalNet, 0.02 + 0.005 * (k + 1))) return cands.slice(0, k + 1);
+    for (let from = 0; from < cands.length; from++) {
+      let sum = 0;
+      for (let k = from; k < cands.length; k++) {
+        sum += cands[k].net;
+        if (near(sum, totalNet, 0.02 + 0.005 * (k - from + 1))) return cands.slice(from, k + 1);
+      }
     }
     return null;
   };
