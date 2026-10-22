@@ -10,16 +10,26 @@ import { addDays, DEFAULT_VAT, emptyInvoice, makeRow, parseDate, parseNumber } f
  *  - read: tabeliread, mille netosummad annavad kokku arve neto
  *  - osapooled: iga registrikoodi ümbrusest nimi ja KMKR. Kumb on oma firma, otsustab prepareForCompany
  *    (inv.candidates), siin on vaikimisi esimene registrikoodiga firma müüja ja teine ostja.
+ *  - vihjed (inv.hints): tarnija nimi pealkirjast ("Elisa arve") ja veebiaadressidest (elisa.ee) – kui
+ *    tarnija registrikoodi dokumendil pole (nt logo + jalus puudub), leitakse tarnija nende järgi.
  */
 
 // Summa: kümnendkohad kohustuslikud (2–3), tuhanded tühiku või punktiga. Kuupäevad (30.09.2026) ei sobi.
 const AMOUNT_RE = /(?<![\d.,\-])-?(?:\d{1,3}(?:[  ]\d{3})+|\d{1,3}(?:\.\d{3})+(?=,)|\d+)[.,]\d{2,3}(?![\d]|[.,]\d)/g;
 const DATE = String.raw`(\d{1,2}[./]\d{1,2}[./]\d{2,4}|\d{4}-\d{2}-\d{2})`;
 const VAT_RATES = [24, 22, 20, 13, 9, 5];
-const LEGAL_FORM = /(?<![\p{L}\d])(?:OÜ|OU|AS|MTÜ|FIE|TÜ|UÜ|SA|Osaühing|Aktsiaselts|Mittetulundusühing|Sihtasutus)(?![\p{L}\d])/iu;
+// Lühivorm ainult suurtähtedega ("as" OCR-i prügis pole aktsiaselts), pikk vorm suure algustähega või suurtähtedega
+const LEGAL_FORM = /(?<![\p{L}\d])(?:OÜ|OU|AS|MTÜ|FIE|TÜ|UÜ|SA|[OoAaMmSs](?:saühing|ktsiaselts|ittetulundusühing|ihtasutus)|OSAÜHING|AKTSIASELTS)(?![\p{L}\d])/u;
 const PARTY_LABEL = /^(?:klient|ostja|maksja(?:\s*nimi)?|müüja|hankija|tarnija|saaja|makse\s*saaja|buyer|seller|customer|supplier|bill\s*to)\s*:\s*/i;
 // Read, mis pole nime kandidaadid: sildid, kontaktid, pangad
 const NOT_NAME = /^(?:arve|kuupäev|maksetähtaeg|tähtaeg|viitenumber|periood|kmkr|reg|tel|telefon|e-?post|e-?mail|www|iban|swift|swedbank|seb|lhv|luminor|coop|tere)\b|@|https?:|pank\b|bank\b/i;
+// OCR liidab veerud üheks reaks: "Firma OÜ Arve nr 123" -> nimi lõpeb enne kõrvalveeru silti
+const COLUMN_LABEL = /\s+(?:arve\s*(?:nr|number|no)|invoice\s*(?:nr|number|no)|kuupäev|maksetähtaeg|viitenumber|kliendinumber|periood|date)\b.*$/i;
+// Domeenid, mis ei viita tarnijale (pangad, e-post, riik)
+const GENERIC_DOMAINS = new Set([
+  "gmail", "hotmail", "outlook", "yahoo", "icloud", "mail", "online", "swedbank", "seb", "lhv", "luminor", "coop",
+  "coopbank", "google", "facebook", "microsoft", "apple", "ariregister", "rik", "emta", "eesti", "riik", "e-arveldaja",
+]);
 const ADDRESS = /\d|(?:^|\s)(?:vald|küla|maakond|harjumaa|tn|mnt|pst|tee|tänav)(?:\s|,|$)/i;
 const COUNTRY = /^(?:eesti|estonia|eesti vabariik|latvia|läti|finland|soome)$/i;
 const TOTAL_WORDS = /summa|kokku|käibemaks|\bkm\b|tasu|ümard|maksta|laekum|ettemaks|total|\bvat\b|saldo|soodustus/i;
@@ -77,7 +87,7 @@ function labeledAmount(lines: string[], label: RegExp): number {
 
 /** Nimi registrikoodi rea ümbrusest: samal real enne silti, muidu lähim nimelaadne rida ülal. */
 function nameNear(lines: string[], i: number, before: string): string {
-  const clean = (s: string) => s.replace(PARTY_LABEL, "").replace(/[\s,;(]+$/, "").trim();
+  const clean = (s: string) => s.replace(PARTY_LABEL, "").replace(COLUMN_LABEL, "").replace(/[\s,;(]+$/, "").trim();
   const inline = clean(before);
   if (/\p{L}{2,}/u.test(inline) && !NOT_NAME.test(inline)) return inline.slice(0, 100);
   for (let j = i - 1; j >= Math.max(0, i - 6); j--) {
@@ -114,12 +124,27 @@ function findParties(lines: string[]): Party[] {
   // Nimed ettevõtlusvormiga, millel registrikoodi pole (nt ostja ainult nimega)
   const key = (s: string) => s.toLowerCase().replace(/\s+/g, " ");
   lines.forEach((l, i) => {
-    if (l.length > 80 || !LEGAL_FORM.test(l) || NOT_NAME.test(l) || /^kasutaja:/i.test(l)) return;
-    const name = l.replace(PARTY_LABEL, "").trim();
+    // Summadega või numbrirohke rida on tabelirida, mitte firma nimi
+    if (l.length > 80 || !LEGAL_FORM.test(l) || NOT_NAME.test(l) || /^kasutaja:/i.test(l) || amountsOf(l, i).length || /\d{4,}/.test(l.replace(COLUMN_LABEL, ""))) return;
+    const name = l.replace(PARTY_LABEL, "").replace(COLUMN_LABEL, "").trim();
     if (out.some((p) => key(p.name).includes(key(name)) || key(name).includes(key(p.name) || "\0"))) return;
     out.push({ name: name.slice(0, 100), regNumber: "", vatNumber: l.match(/\b(EE\d{9})\b/)?.[1], line: i });
   });
   return out.sort((a, b) => a.line - b.line).map(({ line: _, ...p }) => p);
+}
+
+/** Tarnija vihjed: pealkiri "<Nimi> arve" dokumendi alguses ja veebiaadresside/e-posti domeenid (väiketähtedes). */
+function findHints(lines: string[], text: string): string[] {
+  const out: string[] = [];
+  for (const l of lines.slice(0, 8)) {
+    const m = l.match(/^([\p{Lu}][\p{L}&'.-]+(?:\s+[\p{L}&'.-]+){0,2})\s+(?:arve|invoice|kviitung|e-arve)(?![\p{L}])/u);
+    if (m && !/^(?:e-?|elektrooniline|ettemaksu|kreedit|müügi|ostu)$/i.test(m[1])) out.push(m[1].toLowerCase());
+  }
+  for (const m of text.matchAll(/(?:@|\bwww\.|\b)([a-z0-9][a-z0-9-]{1,40})\.(?:ee|com|eu|net|org|lv|lt|fi|io)\b/gi)) {
+    const d = m[1].toLowerCase();
+    if (!GENERIC_DOMAINS.has(d)) out.push(d);
+  }
+  return [...new Set(out)];
 }
 
 /** Tabeliread, mille netod annavad järjest kokku arve neto. Ei leia -> []. */
@@ -202,6 +227,7 @@ export function parseInvoiceText(text: string, filename: string): Invoice {
   const parties = findParties(lines);
   const ibans = [...new Set([...t.matchAll(/\b(EE\d{2}(?:\s?\d{4}){4})\b/g)].map((m) => m[1].replace(/\s/g, "")))];
   inv.candidates = { parties, ibans };
+  inv.hints = findHints(lines, t);
   const withReg = parties.filter((p) => p.regNumber);
   inv.seller = { ...(withReg[0] ?? parties[0] ?? inv.seller), iban: ibans[0] };
   inv.buyer = withReg[1] ?? parties.find((p) => p !== inv.seller && p !== withReg[0]) ?? inv.buyer;

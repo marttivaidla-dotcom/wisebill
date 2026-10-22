@@ -38,6 +38,17 @@ export interface Invoice {
   sendError?: string; // viimase Billberrysse saatmise viga
   // Kõik dokumendist leitud firmad ja IBAN-id – prepareForCompany valib, kumb on oma firma
   candidates?: { parties: Party[]; ibans: string[] };
+  hints?: string[]; // tarnija vihjed dokumendist: pealkiri ("elisa"), domeenid ("elisa.ee" -> "elisa")
+  suggestions?: { name: string; regNumber: string; address: string }[]; // äriregistri vasted, kui tarnija reg.kood puudub
+}
+
+/** Varem saadetud arvete tarnija – tuntakse ära ka siis, kui dokumendil reg.koodi pole (nt ainult logo). */
+export interface KnownSupplier {
+  name: string;
+  regNumber: string;
+  vatNumber?: string;
+  iban?: string;
+  hints: string[]; // dokumentide vihjed (inv.hints), mille järgi see tarnija ära tunda
 }
 
 export interface VatBreakdown {

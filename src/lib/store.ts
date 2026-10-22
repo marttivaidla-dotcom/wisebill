@@ -1,8 +1,9 @@
-import type { Company, SentEntry } from "./types";
+import type { Company, Invoice, KnownSupplier, SentEntry } from "./types";
+import { bareName } from "./prepare";
 
 /**
- * Püsiandmed brauseri localStorage'is: firmad (koos Billberry võtmega), aktiivne firma ja
- * saadetud arvete register (duplikaatide kontroll). Serveris midagi ei hoita.
+ * Püsiandmed brauseri localStorage'is: firmad (koos Billberry võtmega), aktiivne firma,
+ * saadetud arvete register (duplikaatide kontroll) ja õpitud tarnijad. Serveris midagi ei hoita.
  * Brauseri andmete kustutamisel kaob ka see – selleks on varukoopia (JSON).
  */
 
@@ -10,6 +11,7 @@ const K = {
   companies: "wisebill.companies.v2",
   active: "wisebill.activeCompany",
   sent: (id: string) => `wisebill.sent.${id}`,
+  suppliers: "wisebill.suppliers",
 };
 
 function read<T>(key: string, fallback: T): T {
@@ -29,6 +31,7 @@ export interface Backup {
   exportedAt: string;
   companies: Company[];
   sent: Record<string, SentEntry[]>;
+  suppliers?: KnownSupplier[];
 }
 
 export const newId = () => Math.random().toString(36).slice(2, 10);
@@ -73,6 +76,32 @@ export const store = {
   },
   clearSent: (companyId: string) => localStorage.removeItem(K.sent(companyId)),
 
+  suppliers: (): KnownSupplier[] => read(K.suppliers, []),
+  /** Jätab saadetud arvete tarnijad meelde (reg.koodi järgi): vihjed, KMKR ja IBAN liidetakse. */
+  learnSuppliers(invoices: Invoice[]) {
+    const list = store.suppliers();
+    for (const inv of invoices) {
+      const s = inv.seller;
+      if (!s.regNumber) continue;
+      // Ainult tarnija nimega seotud vihjed ("Elisa Eesti AS" <- "elisa"); arve sisu domeenid (teenuste nimed) mitte
+      const words = bareName(s.name).split(" ");
+      const hints = [...(inv.hints ?? []).filter((h) => words.includes(h) || words.join("").startsWith(h)), words[0]]
+        .filter((h) => h && h.length >= 3);
+      const i = list.findIndex((x) => x.regNumber === s.regNumber);
+      const prev = i >= 0 ? list[i] : undefined;
+      const next: KnownSupplier = {
+        name: s.name || prev?.name || "",
+        regNumber: s.regNumber,
+        vatNumber: s.vatNumber || prev?.vatNumber,
+        iban: s.iban || prev?.iban,
+        hints: [...new Set([...(prev?.hints ?? []), ...hints])],
+      };
+      if (i >= 0) list[i] = next;
+      else list.push(next);
+    }
+    write(K.suppliers, list);
+  },
+
   exportAll(): Backup {
     const companies = store.companies();
     return {
@@ -80,6 +109,7 @@ export const store = {
       exportedAt: new Date().toISOString(),
       companies,
       sent: Object.fromEntries(companies.map((c) => [c.id, store.sent(c.id)])),
+      suppliers: store.suppliers(),
     };
   },
   /** Taastab varukoopia: sama id-ga firma kirjutatakse üle, saadetud arved liidetakse. Tagastab firmade arvu. */
@@ -89,6 +119,10 @@ export const store = {
       store.saveCompany(c);
       const known = new Set(store.sent(c.id).map((e) => e.sentAt + e.number));
       store.addSent(c.id, (data.sent?.[c.id] ?? []).filter((e) => !known.has(e.sentAt + e.number)));
+    }
+    if (Array.isArray(data.suppliers)) {
+      const known = new Set(store.suppliers().map((x) => x.regNumber));
+      write(K.suppliers, [...store.suppliers(), ...data.suppliers.filter((x) => !known.has(x.regNumber))]);
     }
     return data.companies.length;
   },

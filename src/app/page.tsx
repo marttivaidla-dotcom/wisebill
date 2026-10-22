@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { Company, Invoice, InvoiceRow, Party, SentEntry } from "@/lib/types";
+import type { RegistryCompany, RegistryDetails } from "@/lib/ariregister";
 import { invoiceIssues, recalcRow, totals, validate } from "@/lib/vat";
 import { buildEInvoiceXml } from "@/lib/export/earve";
-import { prepareForCompany } from "@/lib/prepare";
+import { bareName, prepareForCompany, rankSuggestions } from "@/lib/prepare";
 import { billberryReady, companyIssues } from "@/lib/company";
 import { findDuplicate, toSentEntry, type DuplicateHit } from "@/lib/duplicates";
 import { store } from "@/lib/store";
@@ -15,6 +16,25 @@ import { Field, Step } from "./ui";
 const VAT_RATES = [24, 22, 13, 9, 5, 0];
 const IMAGE_RE = /\.(png|jpe?g|webp|bmp|gif|tiff?)$/i;
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** Äriregistri vasted tarnija vihjete (või nime) järgi, kui tarnija reg.koodi dokumendil pole. */
+async function registrySuggestions(inv: Invoice): Promise<Invoice["suggestions"]> {
+  const queries = [...(inv.hints ?? []), bareName(inv.seller.name)].filter((q) => q.length >= 3).slice(0, 3);
+  const out: RegistryCompany[] = [];
+  for (const q of queries) {
+    try {
+      const res = await fetch(`/api/ariregister?q=${encodeURIComponent(q)}`);
+      if (!res.ok) continue;
+      for (const h of rankSuggestions(q.split(" ")[0], (await res.json()).companies as RegistryCompany[]))
+        if (!out.some((o) => o.regNumber === h.regNumber)) out.push(h);
+    } catch {
+      // äriregister ei vasta – kasutaja sisestab reg.koodi käsitsi
+    }
+    if (out.length >= 5) break;
+  }
+  return out.slice(0, 6).map(({ name, regNumber, address }) => ({ name, regNumber, address }));
+}
+
 const xmlName = (inv: Invoice) => `earve-${inv.seller.regNumber || "tarnija"}-${inv.number.replace(/[^\w.-]+/g, "_") || inv.id}.xml`;
 
 export default function Home() {
@@ -65,7 +85,10 @@ export default function Home() {
           setStatus(`Loen: ${file.name} …`);
           inv = await parsePdf(file);
         }
-        setInvoices((prev) => [...prev, prepareForCompany(inv, company)]);
+        const prepared = prepareForCompany(inv, company, store.suppliers());
+        setInvoices((prev) => [...prev, prepared]);
+        if (!prepared.seller.regNumber)
+          registrySuggestions(prepared).then((suggestions) => update(prepared.id, (i) => ({ ...i, suggestions })));
         setStatus("");
       } catch (e) {
         setStatus(`Viga (${file.name}): ${errText(e)}`);
@@ -91,6 +114,7 @@ export default function Home() {
     if (!company?.billberry) return;
     setBusy(true);
     const done: SentEntry[] = [];
+    const doneInvoices: Invoice[] = [];
     const doneIds = new Set<string>();
     for (const [n, inv] of ready.entries()) {
       setStatus(`Saadan Billberrysse ${n + 1}/${ready.length}: arve ${inv.number} …`);
@@ -98,6 +122,7 @@ export default function Home() {
         const bb = await callBillberry(company.billberry, { action: "upload", xml: buildEInvoiceXml([inv]) });
         done.push(toSentEntry(inv, bb?.id));
         doneIds.add(inv.id);
+        doneInvoices.push(inv);
       } catch (e) {
         update(inv.id, (i) => ({ ...i, sendError: errText(e) }));
       }
@@ -105,6 +130,8 @@ export default function Home() {
     if (done.length) {
       try {
         store.addSent(company.id, done);
+        // Tarnijad meelde: järgmisel korral tuntakse ära ka ilma reg.koodita (logo, pealkiri, domeen)
+        store.learnSuppliers(doneInvoices);
       } catch (e) {
         setStatus(`Arved on saadetud, aga nimekirja salvestamine ebaõnnestus: ${errText(e)}`);
       }
@@ -217,6 +244,17 @@ function InvoiceCard({ inv, company, duplicate, onChange, onRemove }: {
     onChange((i) => ({ ...i, rows: i.rows.map((r, j) => (j === idx ? recalcRow({ ...r, ...patch }) : r)) }));
   const ok = issues.length === 0 && !blocked;
 
+  async function pickSupplier(s: NonNullable<Invoice["suggestions"]>[number]) {
+    let vatNumber = inv.seller.vatNumber;
+    try {
+      const res = await fetch(`/api/ariregister?code=${s.regNumber}`);
+      if (res.ok) vatNumber = ((await res.json()).company as RegistryDetails).vatNumber ?? vatNumber;
+    } catch {
+      // KMKR jääb dokumendist loetuks
+    }
+    onChange((i) => ({ ...i, seller: { ...i.seller, name: s.name, regNumber: s.regNumber, vatNumber }, suggestions: undefined }));
+  }
+
   return (
     <section className={`invoice ${ok ? "ok" : "bad"}`}>
       <div className="card-head">
@@ -261,6 +299,27 @@ function InvoiceCard({ inv, company, duplicate, onChange, onRemove }: {
             <Field label="KMKR number" value={inv.seller.vatNumber ?? ""} onChange={(v) => setSeller("vatNumber", v.trim().toUpperCase())} />
             <Field label="IBAN" value={inv.seller.iban ?? ""} onChange={(v) => setSeller("iban", v.replace(/\s/g, "").toUpperCase())} />
           </div>
+          {!inv.seller.regNumber && (
+            <div className="callout">
+              <b>Tarnija registrikoodi dokumendil pole.</b>{" "}
+              {inv.suggestions === undefined ? "Otsin äriregistrist …"
+                : inv.suggestions.length ? "Vali äriregistrist õige firma – pärast saatmist jääb tarnija meelde:"
+                : "Äriregistrist vasteid ei leitud – sisesta registrikood käsitsi."}
+              {!!inv.suggestions?.length && (
+                <div className="actions">
+                  {inv.suggestions.map((s) => (
+                    <button key={s.regNumber} className="secondary" title={s.address} onClick={() => pickSupplier(s)}>
+                      {s.name} <span className="muted small">{s.regNumber}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <button className="link" onClick={async () => {
+                const suggestions = await registrySuggestions(inv);
+                onChange((i) => ({ ...i, suggestions }));
+              }}>Otsi uuesti nime järgi</button>
+            </div>
+          )}
         </div>
         <div className="own">
           <h3>Ostja (sinu firma)</h3>

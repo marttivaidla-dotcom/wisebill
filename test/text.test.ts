@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseInvoiceText } from "../src/lib/parsers/text";
-import { prepareForCompany } from "../src/lib/prepare";
+import { prepareForCompany, rankSuggestions } from "../src/lib/prepare";
 import { totals } from "../src/lib/vat";
 import type { Company } from "../src/lib/types";
 
@@ -100,4 +100,39 @@ Reg nr 44444444, KMKR nr EE100000004`, "c.pdf");
   const p = prepareForCompany(inv, company);
   assert.equal(p.seller.name, "Kindlustus Grupp, ADB Eesti filiaal");
   assert.equal(p.seller.regNumber, "44444444");
+});
+
+// Ainult logo + pealkiri (OCR pildilt): tarnija reg.koodi dokumendil pole, oma firma rida on liidetud kõrvalveeruga
+const logoOnly = `Telefon arve
+Periood 1. september - 30. september 2026
+Mets ja Meri OÜ Arve nr 2052932851
+Pärli tee 7 Kuupäev 01.10.2026
+74016 Randvere Maksetähtaeg — 18.10.2026
+KMKR EE100000001 Viitenumber — 89426090
+Kuulub tasumisele 23,70 €
+Mobiilteenused Torts as 23700
+Detailse info leiad iseteenindusest telefon.ee/itb, kirjuta info@telefon.ee`;
+
+test("ainult logo/pealkiri: vihjetest tarnija nimi, õpitud tarnija täidab reg.koodi", () => {
+  const raw = parseInvoiceText(logoOnly, "d.jpg");
+  assert.equal(raw.number, "2052932851");
+  assert.deepEqual(raw.hints, ["telefon"]);
+  // OCR prügi "Torts as 23700" pole firma; oma firma nimest on kõrvalveeru silt eemaldatud
+  assert.deepEqual(raw.candidates!.parties.map((p) => p.name), ["Mets ja Meri OÜ"]);
+  const first = prepareForCompany(raw, company);
+  assert.deepEqual([first.seller.name, first.seller.regNumber], ["Telefon", ""]);
+  assert.ok(!first.warnings.some((w) => /dokumendil ei leitud/.test(w)));
+  const known = [{ name: "Telefon Eesti AS", regNumber: "55555555", vatNumber: "EE100000005", hints: ["telefon"] }];
+  const second = prepareForCompany(parseInvoiceText(logoOnly, "d.jpg"), company, known);
+  assert.deepEqual([second.seller.name, second.seller.regNumber, second.seller.vatNumber], ["Telefon Eesti AS", "55555555", "EE100000005"]);
+  assert.match(second.warnings.join(), /tunti ära/);
+});
+
+test("äriregistri vasted: <vihje> Eesti ees, kustutatud lõpus", () => {
+  const hits = [
+    { name: "Telefon Finance OÜ", status: "R" }, { name: "Telefon Eesti AS", status: "R" },
+    { name: "Telefonikeskus OÜ", status: "R" }, { name: "Telefon OÜ", status: "K" },
+  ];
+  assert.deepEqual(rankSuggestions("telefon", hits).map((h) => h.name),
+    ["Telefon Eesti AS", "Telefon Finance OÜ", "Telefonikeskus OÜ", "Telefon OÜ"]);
 });
