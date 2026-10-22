@@ -42,6 +42,8 @@ test("tarnija leitakse ka KMKR-i või nime järgi (ilma OÜ/AS-ita); tundmatu ta
   assert.equal(byVat.seller.code, "PUIT");
   const byName = prepareForCompany({ ...base, seller: { name: "PUIT JA EHITUS", regNumber: "" }, rows: base.rows.map((r) => ({ ...r, account: "" })) }, company, empty());
   assert.equal(byName.rows[0].account, "6900");
+  const longForm = prepareForCompany({ ...base, seller: { name: "Osaühing Puit ja Ehitus", regNumber: "" }, rows: base.rows.map((r) => ({ ...r, account: "" })) }, company, empty());
+  assert.equal(longForm.seller.code, "PUIT");
   const unknown = prepareForCompany({ ...base, seller: { name: "Võõras OÜ", regNumber: "99999999" }, rows: base.rows.map((r) => ({ ...r, account: "", articleCode: "" })) }, company, empty());
   assert.equal(unknown.rows[0].account, "");
   assert.match(unknown.warnings.join(), /pole Booksi tarnijate nimekirjas/);

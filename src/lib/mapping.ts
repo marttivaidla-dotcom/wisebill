@@ -18,7 +18,10 @@ const partyKey = (inv: Invoice) => {
   return key(p.regNumber || p.name);
 };
 
-const LEGAL_FORMS = new Set(["oü", "ou", "as", "mtü", "fie", "tü", "uü", "sa"]);
+const LEGAL_FORMS = new Set([
+  "oü", "ou", "as", "mtü", "fie", "tü", "uü", "sa",
+  "osaühing", "aktsiaselts", "mittetulundusühing", "täisühing", "usaldusühing", "sihtasutus",
+]);
 
 /** Booksi nimekirjast arve vastaspool: registrikood, siis KMKR, siis nimi ilma ettevõtlusvormita (nagu Books). */
 export function findSupplier(p: Party, suppliers: Supplier[] = []): Supplier | undefined {
