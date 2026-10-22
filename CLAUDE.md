@@ -1,7 +1,7 @@
 # WiseBill
 
 Algdokumendid (PDF, Excel, CSV, pildid) → eelvaade/parandus brauseris → **Excellent Books** import
-(e-arve XML; hiljem Books REST API). Kasutajaliides ja koodikommentaarid on eesti keeles.
+(e-arve XML: ostuarved Billberry kaudu, müügiarved failina). Kasutajaliides ja koodikommentaarid on eesti keeles.
 
 ## Piirangud
 - **0 € / kuu**: GitHub + Vercel Hobby + Supabase Free. Ühtegi tasulist API-t (ka OCR/AI) ei kasutata.
@@ -61,4 +61,5 @@ Algdokumendid (PDF, Excel, CSV, pildid) → eelvaade/parandus brauseris → **Ex
 - XML vastab ametlikule XSD-le, aga pole päris Booksi impordiga testitud.
 - Billberry: aadress vastab testkeskkonnas firma võtmega (tühi XML -> 422), päris arvega veel proovimata.
   Kinnitamata, kas kulukontod (`GeneralLedger`) ja `serviceId` jõuavad Booksi. Müügiarved ainult XML-failina.
-- Pangaväljavõtted (camt.053 / CSV) ja Books REST API (`/api/1/IVVc`) on veel tegemata.
+- Skoobist väljas: pangaväljavõtted, Books REST API ning Billberry → Books ühendus (selle seadistab firma ise).
+  Fookus: XML jõuab Billberrysse korrektselt.

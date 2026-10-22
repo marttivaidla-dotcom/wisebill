@@ -38,6 +38,8 @@ create table if not exists public.companies (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+-- Varem loodud tabelile (create table if not exists ei lisa uusi veerge)
+alter table public.companies add column if not exists suppliers jsonb not null default '[]';
 
 create table if not exists public.company_members (
   company_id uuid not null references public.companies on delete cascade,

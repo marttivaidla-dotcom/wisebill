@@ -21,6 +21,8 @@ export function companyIssues(c: Company): CompanyIssue[] {
   const missing = (c.suppliers ?? []).filter((s) => s.account && !c.accounts.some((a) => a.code === s.account));
   if (c.accounts.length && missing.length)
     add("suppliers", `${missing.length} tarnija kulukonto puudub kontoplaanis (nt ${missing[0].name}: ${missing[0].account})`, false);
+  const noReg = (c.suppliers ?? []).filter((s) => !s.regNumber);
+  if (noReg.length) add("suppliers", `${noReg.length} tarnijal puudub registrikood (nt ${noReg[0].name})`, false);
   return out;
 }
 

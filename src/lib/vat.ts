@@ -43,10 +43,11 @@ export function invoiceIssues(inv: Invoice, company?: Company): Issue[] {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(inv.dueDate)) add("dueDate", "Maksetähtaeg puudub või vale formaat");
   if (!inv.seller.name.trim()) add("seller.name", "Müüja nimi puudub");
   if (!inv.buyer.name.trim()) add("buyer.name", "Ostja nimi puudub");
-  // Booksi vastendus: müügiarvel klient, ostuarvel hankija peab olema tuvastatav
-  const cp = inv.direction === "sales" ? "buyer" : "seller";
-  if (!inv[cp].regNumber.trim() && !inv[cp].code?.trim())
-    add(`${cp}.regNumber`, `${cp === "buyer" ? "Kliendi" : "Hankija"} registrikood või Booksi kood puudub`);
+  // Booksi vastendus: müügiarvel klient peab olema tuvastatav (reg.kood või Booksi kood).
+  // Ostuarvel on hankija reg.kood kohustuslik: e-arve 1.2 sellerRegnumber, Billberry lükkab tühja tagasi.
+  if (inv.direction === "sales" && !inv.buyer.regNumber.trim() && !inv.buyer.code?.trim())
+    add("buyer.regNumber", "Kliendi registrikood või Booksi kood puudub");
+  if (inv.direction === "purchase" && !inv.seller.regNumber.trim()) add("seller.regNumber", "Hankija registrikood puudub");
   if (inv.rows.length === 0) add("rows", "Arvel pole ridu");
   inv.rows.forEach((r, i) => {
     if (!r.description.trim()) add(`row.${i}.description`, `Rida ${i + 1}: kirjeldus puudub`);

@@ -41,6 +41,8 @@ export interface Invoice {
   warnings: string[]; // parseri hoiatused, mida kasutaja peab eelvaates kontrollima
   allowDuplicate?: boolean; // kasutaja kinnitas, et see pole duplikaat
   sendError?: string; // viimase Billberrysse saatmise viga
+  // PDF/OCR: kõik dokumendist leitud firmad ja IBAN-id – prepareForCompany valib, kumb on oma firma
+  candidates?: { parties: Party[]; ibans: string[] };
 }
 
 export interface VatBreakdown {
