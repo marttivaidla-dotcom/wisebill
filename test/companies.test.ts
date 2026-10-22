@@ -50,6 +50,18 @@ test("tarnija leitakse ka KMKR-i või nime järgi (ilma OÜ/AS-ita); tundmatu ta
   assert.match(validate(unknown, company).join(), /kulukonto/);
 });
 
+test("ostuarve: hankija reg.kood on kohustuslik (Billberry sellerRegnumber), Booksi kood seda ei asenda", () => {
+  const base = csvInvoices()[0];
+  // nime järgi leitud tarnija annab reg.koodi nimekirjast
+  const byName = prepareForCompany({ ...base, seller: { name: "PUIT JA EHITUS", regNumber: "" } }, company, empty());
+  assert.equal(byName.seller.regNumber, "12345678");
+  const codeOnly = { ...base, seller: { name: "Võõras OÜ", regNumber: "", code: "VOORAS" } };
+  assert.match(validate(codeOnly, company).join(), /Hankija registrikood puudub/);
+  const xml = buildEInvoiceXml([base]);
+  assert.match(xml, /sellerRegnumber="12345678"/);
+  assert.match(xml, /<SellerParty><Name>[^<]+<\/Name><RegNumber>12345678<\/RegNumber>/);
+});
+
 test("Booksi aruanne 'Kontaktide nimekiri': mitmerealised plokid, aadressi jätkurida pole uus kontakt", () => {
   const grid = [
     ["Kliendi nr.", "Nimi", "Kontaktisik"], ["Aadress", "", ""],

@@ -274,7 +274,7 @@ function InvoiceCard({ inv, company, duplicate, onChange, onRemove }: {
           <div className="form-grid">
             <Field label="Nimi" required value={inv[cp].name} error={err(`${cp}.name`)} onChange={(v) => setParty(cp, "name", v)} />
             <Field label="Registrikood" required value={inv[cp].regNumber} error={err(`${cp}.regNumber`)}
-              hint="Või täida Booksi kood" onChange={(v) => setParty(cp, "regNumber", v)} />
+              hint={cp === "buyer" ? "Või täida Booksi kood" : undefined} onChange={(v) => setParty(cp, "regNumber", v)} />
             <Field label="KMKR number" value={inv[cp].vatNumber ?? ""} onChange={(v) => setParty(cp, "vatNumber", v)} />
             {cp === "seller" && <Field label="Hankija IBAN" value={inv.seller.iban ?? ""} onChange={(v) => setParty("seller", "iban", v)} />}
             <Field label={`Booksi ${cp === "buyer" ? "kliendi" : "hankija"} kood`} value={inv[cp].code ?? ""}

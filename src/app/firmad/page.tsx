@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { Account, AccountType, BillberrySettings, Company, InvoiceDirection, RegisterEntry, Supplier } from "@/lib/types";
 import { STATUS_LABELS, type RegistryCompany, type RegistryDetails } from "@/lib/ariregister";
 import { TEMPLATE_ACCOUNTS, accountsFor } from "@/lib/accounts";
+import { bareName } from "@/lib/mapping";
 import { companyIssues } from "@/lib/readiness";
 import { store } from "@/lib/store";
 import { callBillberry, downloadFile, newId, postFile } from "@/lib/upload";
@@ -380,11 +381,45 @@ function SuppliersStep({ company, onSave }: { company: Company; onSave: (c: Comp
   const [filter, setFilter] = useState("");
   const list = company.suppliers ?? [];
   const listId = `sup-acc-${company.id}`;
+  const [busy, setBusy] = useState(false);
   const accountErr = (s: Supplier) =>
     !s.account ? "Kulukonto puudub" : company.accounts.length && !company.accounts.some((a) => a.code === s.account) ? "Kontot pole kontoplaanis" : "";
+  // Billberry (e-arve sellerRegnumber) nõuab hankija registrikoodi
+  const regErr = (s: Supplier) => (!s.regNumber ? "Registrikood puudub – Billberry lükkab arve tagasi" : "");
   const missing = list.filter((s) => accountErr(s)).length;
+  const missingReg = list.filter((s) => regErr(s)).length;
   const setList = (suppliers: Supplier[]) => onSave({ ...company, suppliers });
   const edit = (s: Supplier, patch: Partial<Supplier>) => setList(list.map((x) => (x === s ? { ...x, ...patch } : x)));
+
+  // Puuduvad reg.koodid äriregistrist nime järgi – ainult kui nimi (ilma OÜ/AS-ita) klapib täpselt ühe firmaga
+  async function fillFromRegistry() {
+    setBusy(true);
+    let next = list;
+    let filled = 0;
+    const todo = list.filter((s) => !s.regNumber && s.name.trim().length >= 3);
+    for (const [n, s] of todo.entries()) {
+      setMsg(`Otsin äriregistrist ${n + 1}/${todo.length}: ${s.name} …`);
+      try {
+        const res = await fetch(`/api/ariregister?q=${encodeURIComponent(s.name)}`);
+        const hits: RegistryCompany[] = res.ok ? (await res.json()).companies : [];
+        const same = hits.filter((h) => bareName(h.name) === bareName(s.name));
+        if (same.length !== 1) continue;
+        let vatNumber = s.vatNumber;
+        if (!vatNumber) {
+          const d = await fetch(`/api/ariregister?code=${same[0].regNumber}`);
+          if (d.ok) vatNumber = (await d.json()).company.vatNumber ?? undefined;
+        }
+        next = next.map((x) => (x === s ? { ...x, regNumber: same[0].regNumber, vatNumber } : x));
+        filled++;
+      } catch {
+        // jätame selle tarnija vahele
+      }
+    }
+    setList(next);
+    setBusy(false);
+    const left = next.filter((s) => !s.regNumber).length;
+    setMsg(`✓ Äriregistrist leiti ${filled} registrikoodi.` + (left ? ` ${left} jäi puudu – sisesta need käsitsi.` : ""));
+  }
 
   async function importFile(file: File) {
     try {
@@ -399,16 +434,21 @@ function SuppliersStep({ company, onSave }: { company: Company; onSave: (c: Comp
 
   const shown = list.filter((s) => !filter || `${s.code} ${s.name} ${s.regNumber}`.toLowerCase().includes(filter.toLowerCase()));
   return (
-    <Step n={3} title="Tarnijad ja kulukontod" state={!list.length ? "optional" : missing ? "todo" : "done"}>
+    <Step n={3} title="Tarnijad ja kulukontod" state={!list.length ? "optional" : missing || missingReg ? "todo" : "done"}>
       <p className="hint">
         Nagu Booksis: iga tarnija on seotud kulukontoga. Ostuarve read saavad konto tarnija järgi, Booksi tarnija kood
-        läheb arvele kaasa. Tarnija leitakse registrikoodi, KMKR-i või nime järgi.
+        läheb arvele kaasa. Tarnija leitakse registrikoodi, KMKR-i või nime järgi. Billberry kaudu saatmiseks peab
+        igal tarnijal olema registrikood.
       </p>
       <div className="actions">
         <label className="button">
           Lae Booksi kontaktid (Excel)
           <input type="file" hidden accept=".xlsx,.xls,.csv,.ods" onChange={(e) => (e.target.files?.[0] && importFile(e.target.files[0]), (e.target.value = ""))} />
         </label>
+        <button className="secondary" onClick={() => setList([{ code: "", name: "", regNumber: "" }, ...list])}>+ Lisa tarnija</button>
+        {missingReg > 0 && (
+          <button className="secondary" disabled={busy} onClick={fillFromRegistry}>Otsi puuduvad reg.koodid äriregistrist</button>
+        )}
         {list.length > 0 && (
           <button className="link danger" onClick={() => confirm("Eemalda kõik tarnijad?") && setList([])}>Tühjenda nimekiri</button>
         )}
@@ -419,6 +459,9 @@ function SuppliersStep({ company, onSave }: { company: Company; onSave: (c: Comp
       </p>
       {msg && <p className={msg.startsWith("Viga") ? "callout err" : "status"}>{msg}</p>}
       {missing > 0 && <p className="callout err"><b>{missing} tarnijal puudub kulukonto.</b> Vali konto punaste ridade juures.</p>}
+      {missingReg > 0 && (
+        <p className="callout err"><b>{missingReg} tarnijal puudub registrikood.</b> Ilma selleta ei saa nende arveid Billberrysse saata.</p>
+      )}
 
       {list.length > 0 && (
         <>
@@ -430,14 +473,19 @@ function SuppliersStep({ company, onSave }: { company: Company; onSave: (c: Comp
             <table className="compact suppliers">
               <thead><tr><th>Booksi kood</th><th>Nimi</th><th>Reg.nr</th><th>KMKR</th><th>Kulukonto *</th><th></th></tr></thead>
               <tbody>
-                {shown.map((s) => {
+                {shown.map((s, i) => {
                   const e = accountErr(s);
+                  const r = regErr(s);
                   return (
-                    <tr key={s.code || s.regNumber || s.name}>
-                      <td>{s.code}</td>
-                      <td>{s.name}</td>
-                      <td>{s.regNumber}</td>
-                      <td>{s.vatNumber}</td>
+                    // indeks võtmeks: kood/nimi muutuvad sisestamise ajal
+                    <tr key={i}>
+                      <td><input value={s.code} placeholder="kood" onChange={(ev) => edit(s, { code: ev.target.value.trim() })} /></td>
+                      <td><input value={s.name} placeholder="nimi" className={`wide ${s.name ? "" : "invalid"}`}
+                        onChange={(ev) => edit(s, { name: ev.target.value })} /></td>
+                      <td><input value={s.regNumber} placeholder="reg.kood" className={r ? "invalid" : ""} title={r}
+                        onChange={(ev) => edit(s, { regNumber: ev.target.value.replace(/\s/g, "") })} /></td>
+                      <td><input value={s.vatNumber ?? ""} placeholder="KMKR"
+                        onChange={(ev) => edit(s, { vatNumber: ev.target.value.replace(/\s/g, "").toUpperCase() || undefined })} /></td>
                       <td>
                         <input list={listId} value={s.account ?? ""} placeholder="vali konto" className={e ? "invalid" : ""}
                           title={e || company.accounts.find((a) => a.code === s.account)?.name || ""}

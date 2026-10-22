@@ -164,4 +164,4 @@ table.rows td:nth-child(4) input { width: 80px; }
 table.rows td:nth-child(5) input { width: 70px; }
 table.rows td:nth-child(6) input { width: 110px; }
 table.rows td:nth-child(7) select { width: 76px; }
-table.suppliers td { padding: 3px 8px 3px 0; } table.suppliers td input { width: 120px; }
+table.suppliers td { padding: 3px 8px 3px 0; } table.suppliers td input { width: 120px; } table.suppliers td input.wide { width: 240px; }
