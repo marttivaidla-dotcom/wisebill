@@ -15,7 +15,7 @@ import { binarize, ocrScale } from "@/lib/ocr-prep";
 import { Field, Step } from "./ui";
 
 const VAT_RATES = [24, 22, 13, 9, 5, 0];
-const IMAGE_RE = /\.(png|jpe?g|webp|bmp|gif|tiff?|heic|heif)$/i;
+const IMAGE_RE = /\.(png|jpe?g|jpe|jfif|pjpeg|avif|webp|bmp|gif|tiff?|heic|heif)$/i;
 // Pilt ka faili tüübi järgi (telefoni kaamera: HEIC, laiendita nimi)
 const isImage = (f: File) => f.type.startsWith("image/") || IMAGE_RE.test(f.name);
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
