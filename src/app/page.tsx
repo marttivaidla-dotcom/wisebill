@@ -15,7 +15,9 @@ import { binarize, ocrScale } from "@/lib/ocr-prep";
 import { Field, Step } from "./ui";
 
 const VAT_RATES = [24, 22, 13, 9, 5, 0];
-const IMAGE_RE = /\.(png|jpe?g|webp|bmp|gif|tiff?)$/i;
+const IMAGE_RE = /\.(png|jpe?g|webp|bmp|gif|tiff?|heic|heif)$/i;
+// Pilt ka faili tüübi järgi (telefoni kaamera: HEIC, laiendita nimi)
+const isImage = (f: File) => f.type.startsWith("image/") || IMAGE_RE.test(f.name);
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** Äriregistri vasted tarnija vihjete (või nime) järgi, kui tarnija reg.koodi dokumendil pole. */
@@ -103,7 +105,7 @@ export default function Home() {
     for (const file of Array.from(files)) {
       try {
         let inv: Invoice;
-        if (IMAGE_RE.test(file.name)) {
+        if (isImage(file)) {
           // OCR jookseb brauseris (Tesseract.js) – serverless funktsioon jääb kergeks ja tasuta
           setStatus(`Loen pildilt teksti: ${file.name} … (võib võtta kuni minuti)`);
           const { createWorker } = await import("tesseract.js");
@@ -238,6 +240,12 @@ export default function Home() {
           <b>Lohista failid siia või klõpsa siin</b>
           <span>PDF või pilt (foto, skaneering). Mitu faili korraga on lubatud.</span>
           {companyMissing.length > 0 && <span className="text-err">Täida enne firma andmed.</span>}
+        </label>
+        {/* Telefonis: avab kohe tagakaamera */}
+        <label className={`button camera ${companyMissing.length || busy ? "disabled" : ""}`}>
+          📷 Pildista arve
+          <input type="file" hidden accept="image/*" capture="environment" disabled={companyMissing.length > 0 || busy}
+            onChange={(e) => (e.target.files && handleFiles(e.target.files), (e.target.value = ""))} />
         </label>
         {status && <p className={`status-box ${status.startsWith("Viga") ? "err" : ""}`}>{status}</p>}
       </Step>
