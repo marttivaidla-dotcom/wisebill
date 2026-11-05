@@ -33,6 +33,7 @@ export interface Invoice {
   rows: InvoiceRow[];
   referenceNumber?: string; // viitenumber
   paid?: boolean; // juba makstud (kassatšekk kaardi/sularahaga) – e-arvel Payable=NO
+  noVatOnDoc?: boolean; // dokumendil pole käibemaksu mainitud (KM 0% on järeldus, mitte dokumendilt loetud)
   source: string; // failinimi, millest arve tuli
   warnings: string[]; // parseri hoiatused, mida kasutaja peab eelvaates kontrollima
   allowDuplicate?: boolean; // kasutaja kinnitas, et see pole duplikaat

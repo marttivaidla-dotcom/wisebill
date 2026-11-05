@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { parseInvoiceText } from "../src/lib/parsers/text";
-import { prepareForCompany } from "../src/lib/prepare";
+import { prepareForCompany, registryVatWarning } from "../src/lib/prepare";
 import { binarize } from "../src/lib/ocr-prep";
 import { totals } from "../src/lib/vat";
 import type { Company } from "../src/lib/types";
@@ -59,4 +59,40 @@ test("pildi eeltöötlus: tume tekst heledal ebaühtlasel taustal -> must/valge"
   assert.equal(at(56, 30), 0);
   assert.equal(at(4, 30), 255); // taust (ka tume vasak serv)
   assert.equal(at(60, 30), 255);
+});
+
+// Monitorilt pildistatud arve: summad ilma senditeta, kuupäev sõnadega, käibemaksu dokumendil pole
+test("ekraanifoto: 'oktoober 23, 2026', '3000 €', KM-ta arve = 0%, tähtaeg arve kuupäevast", () => {
+  const inv = read("artonic-ekraan.txt");
+  assert.deepEqual([inv.number, inv.date, inv.dueDate], ["004010", "2026-10-23", "2026-11-06"]);
+  assert.equal(inv.seller.regNumber, "14776425");
+  assert.deepEqual(sums(inv), [3000, 0, 3000]);
+  assert.deepEqual(inv.rows.map((r) => [r.description, r.quantity, r.unitPrice, r.vatRate]), [["Smal format", 1, 3000, 0]]);
+  assert.equal(inv.noVatOnDoc, true);
+});
+
+test("ekraanifoto moiree-mustriga (lugemine ilma hägustuseta): 'Moki ÖL 3000€ KM' – summa ja kuupäev siiski kätte", () => {
+  const inv = read("artonic-ekraan-moiree.txt");
+  assert.deepEqual([inv.number, inv.date], ["004010", "2026-10-23"]);
+  assert.deepEqual(sums(inv), [3000, 0, 3000]);
+  assert.ok(inv.warnings.some((w) => /suurim summa 3000/.test(w)));
+});
+
+test("KM-ta dokument, tarnija KM-kohustuslane -> hoiatus; KM-ga dokument -> ei", () => {
+  const inv = read("artonic-ekraan.txt");
+  assert.match(registryVatWarning(inv, "EE102731264") ?? "", /KM-kohustuslane \(EE102731264\)/);
+  assert.equal(registryVatWarning(inv, null), null);
+  assert.equal(registryVatWarning(read("depo-tsekk.txt"), "EE102198577"), null);
+});
+
+test("pildi eeltöötlus hägustusega: üherealine triip (moiree) kaob, jäme täht jääb", () => {
+  const w = 60, h = 60;
+  const data = new Uint8ClampedArray(w * h * 4).fill(230);
+  const px = (x: number, y: number, v: number) => { const i = (y * w + x) * 4; data[i] = data[i + 1] = data[i + 2] = v; };
+  for (let x = 0; x < w; x++) px(x, 10, 170); // peenike muster
+  for (let y = 30; y < 50; y++) for (let x = 30; x < 36; x++) px(x, y, 20); // tekst
+  binarize({ data, width: w, height: h }, 1);
+  const at = (x: number, y: number) => data[(y * w + x) * 4];
+  assert.equal(at(20, 10), 255);
+  assert.equal(at(33, 40), 0);
 });

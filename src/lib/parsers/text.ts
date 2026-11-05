@@ -14,9 +14,10 @@ import { addDays, DEFAULT_VAT, emptyInvoice, makeRow, parseDate, parseNumber } f
  *    tarnija registrikoodi dokumendil pole (nt logo + jalus puudub), leitakse tarnija nende järgi.
  */
 
-// Summa: kümnendkohad kohustuslikud (2–3), tuhanded tühiku või punktiga. Kuupäevad (30.09.2026) ei sobi.
-const AMOUNT_RE = /(?<![\d.,\-])-?(?:\d{1,3}(?:[  ]\d{3})+|\d{1,3}(?:\.\d{3})+(?=,)|\d+)[.,]\d{2,3}(?![\d]|[.,]\d)/g;
-const DATE = String.raw`(\d{1,2}[./]\d{1,2}[./]\d{2,4}|\d{4}-\d{2}-\d{2})`;
+// Summa: kümnendkohad (2–3) või valuutamärk ("3 000 €", "3000€"), tuhanded tühiku või punktiga. Kuupäevad (30.09.2026) ei sobi.
+const AMOUNT_RE = /(?<![\d.,\-])-?(?:\d{1,3}(?:[  ]\d{3})+|\d{1,3}(?:\.\d{3})+(?=,)|\d+)(?:[.,]\d{2,3}(?![\d]|[.,]\d)|(?=\s?(?:€|EUR\b)))/g;
+const MONTH = String.raw`(?:jaa?n|veeb|feb|m[aä]r|apr|ma[iy]|juu?n|juu?l|aug|sep|okt|oct|nov|de[tc])\p{L}*\.?`;
+const DATE = String.raw`(\d{1,2}[./]\d{1,2}[./]\d{2,4}|\d{4}-\d{2}-\d{2}|${MONTH}\s+\d{1,2}\.?,?\s+\d{4}|\d{1,2}\.?\s+${MONTH},?\s+\d{4})`;
 const VAT_RATES = [24, 22, 20, 13, 9, 5];
 // Lühivorm ainult suurtähtedega ("as" OCR-i prügis pole aktsiaselts), pikk vorm suure algustähega või suurtähtedega
 const LEGAL_FORM = /(?<![\p{L}\d])(?:OÜ|OU|AS|MTÜ|FIE|TÜ|UÜ|SA|[OoAaMmSs](?:saühing|ktsiaselts|ittetulundusühing|ihtasutus)|OSAÜHING|AKTSIASELTS)(?![\p{L}\d])/u;
@@ -26,6 +27,10 @@ const NOT_NAME = /^(?:arve|kuupäev|maksetähtaeg|tähtaeg|viitenumber|periood|k
 // OCR-i tähevead siltides: "Kuupdev", "Maksetahtaeg"
 const DATE_LABEL = String.raw`(?:arve\s*kuup\S{1,2}ev|kuup\S{1,2}ev|kpv|invoice\s*date|date)`;
 const DUE_LABEL = String.raw`(?:makset\S{1,2}htaeg|t\S{1,2}htaeg|due\s*date|maksta\s*hiljemalt)`;
+// Sildi ja väärtuse vahel: "Kuupäev: x", OCR-i müra "kuupäevi x", "kuupäev! —x"
+const LABEL_END = String.raw`\p{L}?[^\p{L}\d]{0,4}`;
+// Käibemaksu mainimine. Paljas "KM" ei loe – see võib olla OCR-i müra
+const VAT_MENTION = /käibemaks|kmkr|\bkm-?\s*(?:nr|ga|ta|kohust|summa)|\bkm\s*[:(]?\s*\d|\d\s*%\s*km\b|(?:ilma|sh\.?|koos)\s+km\b|\bvat\b|\bEE\s?\d{9}\b/i;
 // OCR liidab veerud üheks reaks: "Firma OÜ Arve nr 123" -> nimi lõpeb enne kõrvalveeru silti
 const COLUMN_LABEL = /\s+(?:arve\s*(?:nr|number|no)|invoice\s*(?:nr|number|no)|kuup\S{1,2}ev|makset\S{1,2}htaeg|viitenumber|kliendinumber|periood|date)\b.*$/i;
 // Kaardi/sularahaga makstud tšekk: tähtaeg = kuupäev, e-arvel Payable=NO
@@ -217,7 +222,7 @@ function findRows(lines: string[], totalNet: number, rate: number): InvoiceRow[]
     const l = lines[c.line];
     const first = c.amounts[0];
     let description = l.slice(0, first.index).replace(/[€\s]+$/, "").trim();
-    const letters = description.replace(new RegExp(DATE, "g"), "").replace(QTY_UNIT, "").replace(/[^\p{L}]/gu, "");
+    const letters = description.replace(new RegExp(DATE, "giu"), "").replace(QTY_UNIT, "").replace(/[^\p{L}]/gu, "");
     if (letters.length < 3) {
       // Kirjeldus on eelmis(t)el rida(de)l (nt "Domeeni x pikendamine (" / "04.10.2026 + 1 aasta )")
       const prev: string[] = [];
@@ -229,13 +234,16 @@ function findRows(lines: string[], totalNet: number, rate: number): InvoiceRow[]
     }
     const rowRate = c.vat !== undefined ? (rateOf(c.net, c.vat) ?? rate) : rate;
     const qu = l.match(QTY_UNIT);
-    const qty = qu ? parseNumber(qu[1]) : NaN;
+    // kogus ilma ühikuta kirjelduse lõpus: "Small format 1 3 000 €"
+    const bare = qu ? null : description.match(/\s(\d{1,4}(?:[.,]\d+)?)$/);
+    const qty = parseNumber(qu?.[1] ?? bare?.[1]);
     const price = first.value;
     const qtyOk = Number.isFinite(qty) && qty > 0 && near(round2(qty * price), c.net, 0.011);
+    if (qtyOk && bare) description = description.slice(0, bare.index);
     return makeRow({
       description: description.slice(0, 200) || "Arve rida",
       quantity: qtyOk ? qty : 1,
-      unit: qtyOk ? qu![2].toLowerCase() : "tk",
+      unit: qtyOk && qu ? qu[2].toLowerCase() : "tk",
       unitPrice: qtyOk ? price : c.net,
       vatRate: rowRate,
     });
@@ -307,17 +315,21 @@ export function parseInvoiceText(text: string, filename: string): Invoice {
   const lines = t.split("\n").map((l) => l.trim()).filter(Boolean);
 
   inv.number =
-    find(t, /(?:arve|invoice)\s*(?:nr|number|no)\.?\s*[:#]?\s*([A-Z0-9][A-Z0-9\-\/]*\d[A-Z0-9\-\/]*)/i) ||
+    find(t, /(?:[aä]r?ve|invoice)\s*(?:nr|number|no)\.?[\s:#=—–-]*([A-Z0-9][A-Z0-9\-\/]*\d[A-Z0-9\-\/]*)/i) ||
     find(t, /^\s*(?:arve|invoice)\s+([A-Z0-9\-\/]*\d[A-Z0-9\-\/]*)\s*$/im) ||
     // tšekk: "Arve: 0532206", "Kviitung Nr: 3319"
     find(t, /^\s*(?:arve|kviitung|tšekk|tsekk)\s*(?:nr\.?)?\s*:\s*([A-Z0-9][A-Z0-9\-\/]*\d[A-Z0-9\-\/]*)/im);
-  inv.date = parseDate(find(t, new RegExp(String.raw`${DATE_LABEL}\s*[.:]?\s*${DATE}`, "i")));
-  inv.dueDate = parseDate(find(t, new RegExp(String.raw`${DUE_LABEL}\s*[.:]?\s*${DATE}`, "i")));
+  // "Arve kuupäev" enne teisi ("Tellimuse kuupäev" võib olla dokumendis eespool)
+  inv.date = parseDate(
+    find(t, new RegExp(String.raw`[aä]r?ve\s*kuup\S{1,2}ev${LABEL_END}${DATE}`, "iu")) ||
+    find(t, new RegExp(String.raw`${DATE_LABEL}${LABEL_END}${DATE}`, "iu")),
+  );
+  inv.dueDate = parseDate(find(t, new RegExp(String.raw`${DUE_LABEL}${LABEL_END}${DATE}`, "iu")));
   // kassatšeki tabel "Kv-Arve Kpv Aeg Oper Kassa" / "438 210926 17:12 10825 2": number ja kuupäev (ppkkaa)
   const till = t.match(/(?:^|\s)(\d{1,10})\s+(\d{2})(\d{2})(\d{2})\s+\d{1,2}:\d{2}\b/m);
   if (till && !inv.number) inv.number = till[1];
   if (till && !inv.date) inv.date = parseDate(`${till[2]}.${till[3]}.${till[4]}`);
-  if (!inv.date) inv.date = parseDate(find(t, new RegExp(DATE)));
+  if (!inv.date) inv.date = parseDate(find(t, new RegExp(DATE, "iu")));
   inv.paid = PAID.test(t) || undefined;
   if (!inv.dueDate && inv.paid) inv.dueDate = inv.date;
   if (!inv.dueDate) {
@@ -337,16 +349,23 @@ export function parseInvoiceText(text: string, filename: string): Invoice {
   // Summad
   const all = lines.flatMap(amountsOf);
   const found = findTotals(all);
-  const vatFree = /käibemaksuvaba|maksuvaba|km\s*0\s*%|vat\s*0\s*%|reverse\s*charge|pöördmaksustamine/i.test(t);
+  const vatFree = /käibemaksuvaba|maksuvaba|(?:käibemaks|km|vat)\D{0,15}?(?<!\d)0(?:[.,]0+)?\s*%|reverse\s*charge|pöördmaksustamine/i.test(t);
+  // Käibemaksu pole dokumendil üldse mainitud (ei rida, määra ega KMKR-i): arve on KM-ta, ei oleta 24%
+  inv.noVatOnDoc = (!found && !VAT_MENTION.test(t)) || undefined;
   const rateFound = Number(find(t, /(?:käibemaks|km|vat)\D{0,15}?(\d{1,2})(?:[.,]0+)?\s*%/i));
   let net = NaN;
   let rate = rateFound || DEFAULT_VAT;
-  const gross = found?.gross ?? labeledAmount(lines, /kokku\s*(?:tasuda|maksta)|tasumisele|tasuda|arve\s*summa|summa\s*kokku|kokku|vahesumma|total\s*due|amount\s*due|grand\s*total/i);
+  let gross = found?.gross ?? labeledAmount(lines, /kokku\s*(?:tasuda|maksta)|tasumisele|tasuda|arve\s*summa|summa\s*kokku|kokku|total\s*due|amount\s*due|grand\s*total/i);
+  // vahesumma ainult siis, kui lõppsummat pole – tarne võib sinna veel lisanduda
+  if (!Number.isFinite(gross)) gross = labeledAmount(lines, /vahesumma|subtotal/i);
+  // Silt võib OCR-is kaotsi minna ("Kokku" -> "Moki"): kogusumma on dokumendi suurim summa
+  const guessed = !Number.isFinite(gross) && all.some((a) => a.value > 0);
+  if (guessed) gross = Math.max(...all.map((a) => a.value));
   if (found) {
     net = found.net;
     rate = found.rate;
   } else if (Number.isFinite(gross)) {
-    if (vatFree) rate = 0;
+    if (vatFree || inv.noVatOnDoc) rate = 0;
     net = round2(gross / (1 + rate / 100));
   }
 
@@ -370,8 +389,9 @@ export function parseInvoiceText(text: string, filename: string): Invoice {
   const computed = totals(inv).gross;
   if (Number.isFinite(gross) && !near(computed, gross, 0.005))
     inv.warnings.push(`Dokumendi kogusumma ${gross} ei klapi arvutatuga ${computed}`);
+  if (guessed) inv.warnings.push(`Kogusumma silti ei leitud – võetud dokumendi suurim summa ${gross}, kontrolli`);
   if (!found && Number.isFinite(gross))
-    inv.warnings.push(rate === 0 ? "KM-ta arve (käibemaksuvaba) – kontrolli" : `KM leitud kogusummast (${rate}%) – kontrolli`);
+    inv.warnings.push(inv.noVatOnDoc ? "Dokumendil pole käibemaksu – KM 0%, kontrolli" : rate === 0 ? "KM-ta arve (käibemaksuvaba) – kontrolli" : `KM leitud kogusummast (${rate}%) – kontrolli`);
   if (!rows.length) inv.warnings.push("PDF/OCR: read on koondatud üheks reaks – kontrolli ja jaga vajadusel");
   return inv;
 }

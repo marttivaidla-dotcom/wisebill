@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { parseDate } from "../src/lib/parsers/common";
 import { parseInvoiceText } from "../src/lib/parsers/text";
 import { prepareForCompany, rankSuggestions } from "../src/lib/prepare";
 import { totals } from "../src/lib/vat";
@@ -170,4 +171,34 @@ test("jaluse veerud: tarnija nimi enne aadressi, read sõnaga ettemaks, viivis e
   ]);
   assert.equal(totals(inv).gross, 442.8);
   assert.deepEqual(inv.warnings, []);
+});
+
+test("kuupäev sõnadega: eesti ja inglise keeles, kuu ees või taga", () => {
+  for (const [s, iso] of [
+    ["oktoober 23, 2026", "2026-10-23"], ["oktöober 23, 2026", "2026-10-23"], ["23. oktoober 2026", "2026-10-23"],
+    ["1 märts 2026", "2026-03-01"], ["juuni 5, 2026", "2026-06-05"], ["juuli 5, 2026", "2026-07-05"],
+    ["October 3, 2026", "2026-10-03"], ["5. dets 2026", "2026-12-05"], ["jaanuar 2, 2027", "2027-01-02"],
+    ["oktoober 2026", ""], ["Tarne 23, 2026", ""],
+  ]) assert.equal(parseDate(s), iso, s);
+});
+
+test("täisarvulised summad: vahesumma + tarne = kokku, 'Arve kuupäev' enne 'Tellimuse kuupäev', KM 0% sildist", () => {
+  const inv = parseInvoiceText(`Tellimuse kuupäev: oktoober 20, 2026
+Arve kuupäev: 23. oktoober 2026
+Arve number: 77
+Toode Kogus Hind
+Maal 1 1 200 €
+Vahesumma 1 200 €
+Tarne 50 €
+Kokku 1 250 €
+Käibemaks 0%`, "a.pdf");
+  assert.equal(inv.date, "2026-10-23");
+  assert.deepEqual(inv.rows.map((r) => [r.description, r.net, r.vatRate]), [["Maal", 1200, 0], ["Tarne", 50, 0]]);
+  assert.equal(inv.noVatOnDoc, undefined); // KM on dokumendil kirjas
+  assert.equal(totals(inv).gross, 1250);
+});
+
+test("KM-rida puudub, aga KMKR on: jääb 24% kogusummast (kassatšeki juht); paljas 'KM' müras ei loe", () => {
+  assert.equal(parseInvoiceText("Firma OÜ\nKMKR nr: EE101234567\nKokku 124 €", "a").rows[0].vatRate, 24);
+  assert.equal(parseInvoiceText("Firma OÜ\nKokku 124 € KM", "a").rows[0].vatRate, 0);
 });

@@ -84,3 +84,17 @@ test("makstud kassatšekk: Payable=NO, XML vastab XSD-le", async () => {
   });
   assert.deepEqual(result.errors.map((e) => e.rawMessage), []);
 });
+
+test("KM-ta arve (0%): XML vastab XSD-le, KM summa 0, kokku = neto", async () => {
+  const inv = prepareForCompany(parseInvoiceText(readFileSync("test/fixtures/ocr/artonic-ekraan.txt", "utf8"), "a.jpg"), company);
+  const xml = buildEInvoiceXml([inv]);
+  const result = await validateXML({
+    xml: [{ fileName: "km0.xml", contents: xml }],
+    schema: [readFileSync("schema/e-invoice_ver1.2.EN.xsd", "utf8")],
+  });
+  assert.deepEqual(result.errors.map((e) => e.rawMessage), []);
+  assert.match(xml, /<VATRate>0\.00<\/VATRate><VATSum>0\.00<\/VATSum>/);
+  assert.match(xml, /<TotalVATSum>0\.00<\/TotalVATSum>/);
+  assert.match(xml, /<TotalSum>3000\.00<\/TotalSum>/);
+  assert.match(xml, /<Payable>YES<\/Payable><PayDueDate>2026-11-06<\/PayDueDate>/);
+});

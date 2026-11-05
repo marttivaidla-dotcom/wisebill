@@ -3,7 +3,12 @@
  * Fotod (kortsus kassatšekk, ebaühtlane valgus, mustriline taust) annavad Tesseractile palju müra:
  * halltoon -> kohalik (adaptiivne) lävendamine: piksel on tekst, kui see on ümbruse keskmisest selgelt tumedam.
  * Nii kaob varjude ja tausta mõju ning jääb must tekst valgel.
+ * Ekraanilt pildistatud arvel on moiree-muster: seda lävendamine võimendab, kerge hägustus (blur) enne kaotab selle.
+ * Selge pildi tekst blur'iga veidi halveneb, seega on see teine katse, kui esimese kindlus on madal.
  */
+
+/** Tesseracti kindlus (0–100), millest madalama korral proovitakse pilti hägustatult uuesti. */
+export const LOW_CONFIDENCE = 60;
 
 export interface Pixels {
   data: Uint8ClampedArray; // RGBA
@@ -11,11 +16,8 @@ export interface Pixels {
   height: number;
 }
 
-/** Halltoon + Bradley adaptiivne lävendamine (integraalpildiga, O(n)). Muudab data't kohapeal. */
-export function binarize(img: Pixels, windowFrac = 1 / 16, darker = 0.15): Pixels {
-  const { data, width: w, height: h } = img;
-  const gray = new Float64Array(w * h);
-  for (let i = 0; i < w * h; i++) gray[i] = 0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2];
+/** Iga piksli ümbruse (raadius r) keskmine integraalpildiga, O(n). */
+function boxMean(gray: Float64Array, w: number, h: number, r: number): Float64Array {
   // integraalpilt: (w+1) x (h+1)
   const W = w + 1;
   const integral = new Float64Array(W * (h + 1));
@@ -26,14 +28,28 @@ export function binarize(img: Pixels, windowFrac = 1 / 16, darker = 0.15): Pixel
       integral[(y + 1) * W + x + 1] = integral[y * W + x + 1] + row;
     }
   }
-  const r = Math.max(4, Math.round((Math.max(w, h) * windowFrac) / 2));
+  const out = new Float64Array(w * h);
   for (let y = 0; y < h; y++) {
     const y0 = Math.max(0, y - r), y1 = Math.min(h, y + r + 1);
     for (let x = 0; x < w; x++) {
       const x0 = Math.max(0, x - r), x1 = Math.min(w, x + r + 1);
       const sum = integral[y1 * W + x1] - integral[y0 * W + x1] - integral[y1 * W + x0] + integral[y0 * W + x0];
-      const mean = sum / ((x1 - x0) * (y1 - y0));
-      const v = gray[y * w + x] < mean * (1 - darker) ? 0 : 255;
+      out[y * w + x] = sum / ((x1 - x0) * (y1 - y0));
+    }
+  }
+  return out;
+}
+
+/** Halltoon + (soovi korral kerge hägustus) + Bradley adaptiivne lävendamine. Muudab data't kohapeal. */
+export function binarize(img: Pixels, blur = 0, windowFrac = 1 / 16, darker = 0.15): Pixels {
+  const { data, width: w, height: h } = img;
+  const raw = new Float64Array(w * h);
+  for (let i = 0; i < w * h; i++) raw[i] = 0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2];
+  const gray = blur > 0 ? boxMean(raw, w, h, blur) : raw;
+  const means = boxMean(gray, w, h, Math.max(4, Math.round((Math.max(w, h) * windowFrac) / 2)));
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const v = gray[y * w + x] < means[y * w + x] * (1 - darker) ? 0 : 255;
       const i = (y * w + x) * 4;
       data[i] = data[i + 1] = data[i + 2] = v;
       data[i + 3] = 255;

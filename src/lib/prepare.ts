@@ -77,6 +77,12 @@ export function prepareForCompany(inv: Invoice, company: Company, known: KnownSu
   };
 }
 
+/** Hoiatus, kui KM-ta dokumendi tarnija on äriregistri järgi KM-kohustuslane. */
+export const registryVatWarning = (inv: Invoice, vatNumber: string | null | undefined): string | null =>
+  inv.noVatOnDoc && vatNumber
+    ? `Tarnija on KM-kohustuslane (${vatNumber}), aga dokumendil käibemaksu pole – kontrolli arvet või küsi tarnijalt üle`
+    : null;
+
 /**
  * Äriregistri otsingu vasted järjestatuna: vihjega algav nimi ees, "<vihje> Eesti" (nt Elisa Eesti AS) esimesena,
  * registrist kustutatud lõpus.

@@ -6,12 +6,12 @@ import type { Company, Invoice, InvoiceRow, Party, SentEntry } from "@/lib/types
 import type { RegistryCompany, RegistryDetails } from "@/lib/ariregister";
 import { invoiceIssues, recalcRow, totals, validate } from "@/lib/vat";
 import { buildEInvoiceXml } from "@/lib/export/earve";
-import { bareName, prepareForCompany, rankSuggestions } from "@/lib/prepare";
+import { bareName, prepareForCompany, rankSuggestions, registryVatWarning } from "@/lib/prepare";
 import { billberryReady, companyIssues } from "@/lib/company";
 import { findDuplicate, toSentEntry, type DuplicateHit } from "@/lib/duplicates";
 import { store } from "@/lib/store";
 import { callBillberry, downloadFile, parsePdf, parseText } from "@/lib/upload";
-import { binarize, ocrScale } from "@/lib/ocr-prep";
+import { binarize, LOW_CONFIDENCE, ocrScale } from "@/lib/ocr-prep";
 import { Field, Step } from "./ui";
 
 const VAT_RATES = [24, 22, 13, 9, 5, 0];
@@ -39,7 +39,7 @@ async function registrySuggestions(inv: Invoice): Promise<Invoice["suggestions"]
 }
 
 /** Foto/skaneering OCR-i jaoks: õige suurus + adaptiivne lävendamine (vt ocr-prep.ts). Viga -> originaal. */
-async function prepareImage(file: File): Promise<Blob> {
+async function prepareImage(file: File, blur = 0): Promise<Blob> {
   try {
     const bmp = await createImageBitmap(file); // arvestab EXIF-i pööramist
     const s = ocrScale(bmp.width, bmp.height);
@@ -49,7 +49,7 @@ async function prepareImage(file: File): Promise<Blob> {
     const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
     ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
     const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    binarize(img);
+    binarize(img, blur);
     ctx.putImageData(img, 0, 0);
     return await new Promise<Blob>((ok, fail) => canvas.toBlob((b) => (b ? ok(b) : fail(new Error("toBlob"))), "image/png"));
   } catch {
@@ -110,7 +110,12 @@ export default function Home() {
           setStatus(`Loen pildilt teksti: ${file.name} … (võib võtta kuni minuti)`);
           const { createWorker } = await import("tesseract.js");
           const worker = await createWorker(["est", "eng"]);
-          const { data } = await worker.recognize(await prepareImage(file));
+          let { data } = await worker.recognize(await prepareImage(file));
+          // Madal kindlus (nt monitorilt pildistatud arve moiree-mustriga): teine katse hägustatult, parem võidab
+          if (data.confidence < LOW_CONFIDENCE) {
+            const second = (await worker.recognize(await prepareImage(file, 1))).data;
+            if (second.confidence > data.confidence) data = second;
+          }
           await worker.terminate();
           inv = await parseText(data.text, file.name);
         } else {
@@ -124,11 +129,15 @@ export default function Home() {
         else
           registryDetails(prepared.seller.regNumber).then((d) => {
             if (!d) return;
+            const added = [
+              d.status !== "R" ? `Tarnija on äriregistris olekus "${d.status}" (mitte registrisse kantud)` : null,
+              registryVatWarning(prepared, d.vatNumber),
+            ].filter((w) => w !== null);
             // kasutaja võis vahepeal reg.koodi muuta – siis mitte üle kirjutada
             update(prepared.id, (i) => i.seller.regNumber !== d.regNumber ? i : {
               ...i,
               seller: { ...i.seller, name: d.name, vatNumber: i.seller.vatNumber || d.vatNumber || undefined },
-              warnings: d.status !== "R" ? [...i.warnings, `Tarnija on äriregistris olekus "${d.status}" (mitte registrisse kantud)`] : i.warnings,
+              warnings: [...i.warnings, ...added],
             });
           });
         setStatus("");

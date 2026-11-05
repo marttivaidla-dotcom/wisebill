@@ -21,6 +21,11 @@ müügiarved, Excel/CSV import, pangaväljavõtted, Books REST API, Billberry �
   eelmise kauba juurde), makstud (kaart/sularaha) -> `paid`, e-arvel `Payable=NO`. OCR-i "UU/00" -> "OÜ".
 - `src/lib/ocr-prep.ts` – pildi eeltöötlus enne Tesseracti (brauseris canvas): skaleerimine + adaptiivne lävendamine.
   Fotod (kortsus tšekk, mustriline taust) loevad sellega oluliselt paremini. Testi OCR-i väljundid: `test/fixtures/ocr/`.
+  Kindlus < 60 (nt monitorilt pildistatud arve moiree-mustriga): teine lugemine kerge hägustusega, kõrgem kindlus võidab.
+- KM: kolmik neto + KM = kokku > määr tekstis > "käibemaksu pole mainitud" (paljas "KM" on OCR-i müra) = 0% (`noVatOnDoc`),
+  mitte 24%. Kui tarnija on äriregistri järgi KM-kohustuslane, tuleb hoiatus (`registryVatWarning`), määr jääb dokumendi järgi.
+- Summad ilma senditeta sobivad ainult valuutamärgiga ("3 000 €"). Kuupäev ka sõnadega ("oktoober 23, 2026", "23. oktoober 2026").
+  Tähtaja puudumisel kuupäev + 14 päeva.
 - Reg.koodi olemasolul võetakse tarnija ametlik nimi ja KMKR äriregistrist (OCR-i vead nimes ei loe).
 - `src/lib/prepare.ts` – `prepareForCompany()`: oma firma tuvastatakse reg.koodi/KMKR-i/nime järgi, tarnija = teine.
 - `src/lib/vat.ts` – summad arvutatakse alati ise (`recalcRow`, `totals`, KM määrade kaupa summalt); `invoiceIssues`.

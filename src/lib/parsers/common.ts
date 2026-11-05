@@ -17,7 +17,11 @@ export function parseNumber(v: unknown): number {
   return Number(s);
 }
 
-/** "01.10.2026", "1.10.26", "2026-10-01", Excel seerianumber, Date -> "2026-10-01" (või ""). */
+// Kuu nime algus (täpitähed eemaldatud, nii sobib ka OCR-i "oktöober"), indeks + 1 = kuu number
+const MONTHS = [/^jaa?n/, /^(?:veeb|feb)/, /^mar/, /^apr/, /^ma[iy]/, /^juu?n/, /^juu?l/, /^aug/, /^sep/, /^(?:okt|oct)/, /^nov/, /^de[tc]/];
+const monthOf = (w: string) => MONTHS.findIndex((m) => m.test(w.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase())) + 1;
+
+/** "01.10.2026", "1.10.26", "2026-10-01", "oktoober 23, 2026", "23. oktoober 2026", Excel seerianumber, Date -> "2026-10-01" (või ""). */
 export function parseDate(v: unknown): string {
   if (v instanceof Date && !isNaN(v.getTime())) {
     const p = (n: number) => String(n).padStart(2, "0");
@@ -35,7 +39,12 @@ export function parseDate(v: unknown): string {
     const y = m[3].length === 2 ? `20${m[3]}` : m[3];
     return `${y}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
   }
-  return "";
+  // kuu sõnaga: "oktoober 23, 2026" (WooCommerce) või "23. oktoober 2026"
+  m = s.match(/^(\p{L}{3,})\.?\s+(\d{1,2})\.?,?\s+(\d{4})/u);
+  const n = m ? null : s.match(/^(\d{1,2})\.?\s+(\p{L}{3,})\.?,?\s+(\d{4})/u);
+  const [month, day, year] = m ? [m[1], m[2], m[3]] : n ? [n[2], n[1], n[3]] : [];
+  const mm = month && day ? monthOf(month) : 0;
+  return mm && day ? `${year}-${String(mm).padStart(2, "0")}-${day.padStart(2, "0")}` : "";
 }
 
 export function addDays(iso: string, days: number): string {
