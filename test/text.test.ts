@@ -202,3 +202,109 @@ test("KM-rida puudub, aga KMKR on: jääb 24% kogusummast (kassatšeki juht); pa
   assert.equal(parseInvoiceText("Firma OÜ\nKMKR nr: EE101234567\nKokku 124 €", "a").rows[0].vatRate, 24);
   assert.equal(parseInvoiceText("Firma OÜ\nKokku 124 € KM", "a").rows[0].vatRate, 0);
 });
+
+// Tekst nagu PDF-ist; veerud tühiku või tabulaatoriga. Haamritasu on arverida, 2700 + 324 = 3024
+const auction = (sep: string) => `J. Vilmsi tn 41
+Kesklinna linnaosa, Tallinn
+Rg-kood 16552569
+KMKR nr EE102523812
+Arve number: 555
+Arve kuupäev: 12.10.2026
+Kirjeldus${sep}Kogus${sep}Ühik${sep}Hind km-ga${sep}Hind km-ta${sep}KM${sep}Summa km-ta
+Avo Paistik "Maja suure londiga" 1992, 61×73${sep}1${sep}2 700,00${sep}2 700,00${sep}-${sep}2 700,00
+Haamritasu 12%${sep}1${sep}324,00${sep}261,29${sep}24%${sep}261,29
+Summa km-ta -${sep}2 700,00
+Summa km-ta 24%${sep}261,29
+Käibemaks 24%${sep}62,71
+Arve kokku (EUR)${sep}3 024,00`;
+
+for (const [name, sep] of [["tühik", " "], ["tabulaator", "\t"]])
+  test(`mitu KM-määra (${name}): KM-ta rida + 24% rida jäävad eraldi, summad klapivad`, () => {
+    const inv = parseInvoiceText(auction(sep), "a.pdf");
+    assert.deepEqual(inv.rows.map((r) => [r.description, r.quantity, r.unitPrice, r.vatRate]), [
+      ['Avo Paistik "Maja suure londiga" 1992, 61×73', 1, 2700, 0],
+      ["Haamritasu 12%", 1, 261.29, 24],
+    ]);
+    const t = totals(inv);
+    assert.deepEqual([t.net, t.vat, t.gross], [2961.29, 62.71, 3024]);
+    assert.deepEqual(inv.candidates?.parties[0]?.regNumber, "16552569");
+    assert.deepEqual(inv.warnings, []);
+  });
+
+test("kaks KM-määra kokkuvõttes: 24% ja 9%, rea % summade järel", () => {
+  const inv = parseInvoiceText(`Arve nr 1
+Toode Kogus Hind KM Summa
+Raamat 1 100,00 9% 100,00
+Pastakas 1 50,00 24% 50,00
+Käibemaks 9% 9,00
+Käibemaks 24% 12,00
+Kokku 171,00`, "a.pdf");
+  assert.deepEqual(inv.rows.map((r) => [r.net, r.vatRate]), [[100, 9], [50, 24]]);
+  assert.equal(totals(inv).gross, 171);
+});
+
+test("suurem summa pole teine KM-määr (eelmise arve võlg): jääb tavaline tee", () => {
+  const inv = parseInvoiceText(`Arve nr 2
+Teenus 1 tk 100,00 100,00
+Summa 100,00
+Käibemaks 24% 24,00
+Kokku 124,00
+Eelmise arve võlg 500,00`, "a.pdf");
+  assert.deepEqual(inv.rows.map((r) => [r.net, r.vatRate]), [[100, 24]]);
+  assert.equal(totals(inv).gross, 124);
+});
+
+test("registrikoodi silt mis tahes kujul; number ka tühikutega või järgmisel real", () => {
+  const regOf = (line: string) => parseInvoiceText(`Tarnija Ladu OÜ\n${line}\nArve nr 55\nKokku 10,00`, "a.pdf").seller.regNumber;
+  for (const label of [
+    "Registrikood", "Registrikood:", "Reg.kood", "reg.kood:", "Reg. kood", "reg kood", "regkood", "reg,kood", "Reg-kood",
+    "reg,number", "reg, number", "reg number", "Reg.number", "regnumber", "Reg nr", "reg.nr", "Reg.nr.", "reg,nr", "Reg. nr:", "reg-nr",
+    "Reg. no", "Reg. No.", "Reg:", "Reg.", "Reg.kood nr", "Req. nr", "Rg-kood", "Registri nr", "Registri number", "Registri kood",
+    "Registreerimisnumber", "Registreerimis nr", "Äriregistri kood", "Äriregistrikood", "Äriregistri nr", "Ariregistri nr",
+    "Registry code", "Registration number", "Registration No.", "Company code", "Company reg. no", "Ettevõtte kood",
+    "Ettevõtte registrikood", "Firma reg.nr", "R/K", "registrikoodiga",
+  ])
+    assert.equal(regOf(`${label} 12345678`), "12345678", label);
+  assert.equal(regOf("Reg.kood: 1234 5678"), "12345678");
+  assert.equal(regOf("Aia 5, Tallinn, reg,number 12345678, KMKR EE100000001"), "12345678");
+  assert.equal(regOf("Reg. nr\n12345678"), "12345678");
+  assert.equal(regOf("Reg. nr KMKR\n12345678 EE100000001"), "12345678");
+  // sõnad, mis pole silt
+  for (const line of ["Regioon 12345678", "Regulaarne 12345678", "Kliendi nr 12345678", "Reg. nr EE123456789", "Reg nr 12345678,50"])
+    assert.equal(regOf(line), "", line);
+});
+
+// pdf-parse: paremale joondatud silt tabulaatoriga väärtuse järel, rea numbrid enne kirjeldust, sildid väärtustest lahus
+test("PDF tekst: silt väärtuse järel (tab), arverea veerud tagurpidi, kuupäevad siltideta", () => {
+  const inv = parseInvoiceText(`0,5% päevas
+11340532\tReg.nr.:
+Kuupäev:
+Tasuda
+Käibemaks:
+Kokku:
+Tähtaeg:
+13.11.2026
+S u m m a\tHind\tKauba nimetus \tKogus
+220,00
+Telefon: \tEE352200221034701947
+3K&T Raamatupidamine OÜ
+272,80
+52,80
+220,00
+220,00\t1\tRaamatupidamisteenus 10/2026
+Osaühing ELKIS Grupp
+Maksja:
+06.11.2026
+260987\tArve nr.:
+EE101113634
+KM-ta hind
+220,00 \t24%
+KMKR nr:
+Maksja KMKR nr: EE101019631`, "a.pdf");
+  assert.equal(inv.seller.regNumber, "11340532");
+  assert.equal(inv.number, "260987");
+  assert.equal(inv.date, "2026-11-06");
+  assert.equal(inv.dueDate, "2026-11-13");
+  assert.deepEqual(inv.rows.map((r) => [r.description, r.quantity, r.net]), [["Raamatupidamisteenus 10/2026", 1, 220]]);
+  assert.equal(totals(inv).gross, 272.8);
+});

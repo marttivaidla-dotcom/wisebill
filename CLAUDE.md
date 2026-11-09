@@ -24,8 +24,13 @@ müügiarved, Excel/CSV import, pangaväljavõtted, Books REST API, Billberry �
   Kindlus < 60 (nt monitorilt pildistatud arve moiree-mustriga): teine lugemine kerge hägustusega, kõrgem kindlus võidab.
 - KM: kolmik neto + KM = kokku > määr tekstis > "käibemaksu pole mainitud" (paljas "KM" on OCR-i müra) = 0% (`noVatOnDoc`),
   mitte 24%. Kui tarnija on äriregistri järgi KM-kohustuslane, tuleb hoiatus (`registryVatWarning`), määr jääb dokumendi järgi.
+- Mitu KM-määra (nt kunstiteos KM-ta + haamritasu 24%): rea määr rea enda andmetest, vastu võetakse ainult siis, kui read
+  annavad kokku dokumendi suurima summa; muidu tavaline tee.
 - Summad ilma senditeta sobivad ainult valuutamärgiga ("3 000 €"). Kuupäev ka sõnadega ("oktoober 23, 2026", "23. oktoober 2026").
   Tähtaja puudumisel kuupäev + 14 päeva.
+- Registrikoodi silt on paindlik (`REG_LABEL`: reg.kood, reg,number, Reg no, Reg:, Äriregistri nr, Company code, R/K …), number ka tühikutega või järgmisel real.
+- pdf-parse annab paremale joondatud sildi tabulaatoriga väärtuse järel ("11340532⇥Reg.nr.:") ja rea numbrid enne
+  kirjeldust – parser pöörab need ümber. Siltidest lahus kuupäevad: tähtaja sildi korral varaseim = arve, hiliseim = tähtaeg.
 - Reg.koodi olemasolul võetakse tarnija ametlik nimi ja KMKR äriregistrist (OCR-i vead nimes ei loe).
 - `src/lib/prepare.ts` – `prepareForCompany()`: oma firma tuvastatakse reg.koodi/KMKR-i/nime järgi, tarnija = teine.
 - `src/lib/vat.ts` – summad arvutatakse alati ise (`recalcRow`, `totals`, KM määrade kaupa summalt); `invoiceIssues`.
