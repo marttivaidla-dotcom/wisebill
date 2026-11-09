@@ -6,7 +6,7 @@ import type { Company, Invoice, InvoiceRow, Party, SentEntry } from "@/lib/types
 import type { RegistryCompany, RegistryDetails } from "@/lib/ariregister";
 import { invoiceIssues, recalcRow, totals, validate } from "@/lib/vat";
 import { buildEInvoiceXml } from "@/lib/export/earve";
-import { bareName, prepareForCompany, rankSuggestions, registryVatWarning } from "@/lib/prepare";
+import { bareName, isEstonianRegCode, prepareForCompany, rankSuggestions, registryVatWarning } from "@/lib/prepare";
 import { billberryReady, companyIssues } from "@/lib/company";
 import { findDuplicate, toSentEntry, type DuplicateHit } from "@/lib/duplicates";
 import { store } from "@/lib/store";
@@ -126,7 +126,8 @@ export default function Home() {
         setInvoices((prev) => [...prev, prepared]);
         if (!prepared.seller.regNumber)
           registrySuggestions(prepared).then((suggestions) => update(prepared.id, (i) => ({ ...i, suggestions })));
-        else
+        // välismaa tarnija (reg.koodiks VAT-number) – äriregistris teda pole
+        else if (isEstonianRegCode(prepared.seller.regNumber))
           registryDetails(prepared.seller.regNumber).then((d) => {
             if (!d) return;
             const added = [
@@ -365,7 +366,13 @@ function InvoiceCard({ inv, company, duplicate, onChange, onRemove }: {
               <b>Tarnija registrikoodi dokumendil pole.</b>{" "}
               {inv.suggestions === undefined ? "Otsin äriregistrist …"
                 : inv.suggestions.length ? "Vali äriregistrist õige firma – pärast saatmist jääb tarnija meelde:"
-                : "Äriregistrist vasteid ei leitud – sisesta registrikood käsitsi."}
+                : "Äriregistrist vasteid ei leitud – sisesta registrikood käsitsi."}{" "}
+              Välismaa tarnijal sobib tema VAT- või registrinumber.
+              {!!inv.seller.vatNumber && (
+                <button className="link" onClick={() => setSeller("regNumber", inv.seller.vatNumber!)}>
+                  Kasuta VAT-numbrit {inv.seller.vatNumber}
+                </button>
+              )}
               {!!inv.suggestions?.length && (
                 <div className="actions">
                   {inv.suggestions.map((s) => (

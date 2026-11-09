@@ -3,7 +3,14 @@ import type { Company, Invoice, KnownSupplier, Party } from "./types";
 const LEGAL_FORMS = new Set([
   "oü", "ou", "as", "mtü", "fie", "tü", "uü", "sa",
   "osaühing", "aktsiaselts", "mittetulundusühing", "täisühing", "usaldusühing", "sihtasutus",
+  "pty", "ltd", "limited", "llc", "inc", "gmbh", "ag", "oy", "oyj", "sia", "uab", "ab", "aps", "bv", "plc", "corp",
 ]);
+
+/** Eesti KMKR (EE + 9 numbrit) – muu on välismaa VAT-number. */
+export const isEstonianVat = (v: string) => /^EE\d{9}$/i.test(v.replace(/\s/g, ""));
+
+/** Eesti registrikood (8 numbrit) – ainult selle järgi saab äriregistrist otsida. */
+export const isEstonianRegCode = (v: string) => /^\d{8}$/.test(v.trim());
 
 /** Nimi ilma ettevõtlusvormi ja kirjavahemärkideta ("Puit OÜ" == "PUIT"). */
 export const bareName = (s: string) =>
@@ -56,6 +63,10 @@ export function prepareForCompany(inv: Invoice, company: Company, known: KnownSu
       if (k) {
         seller = { name: k.name, regNumber: k.regNumber, vatNumber: seller.vatNumber || k.vatNumber, iban: seller.iban || k.iban };
         warnings.push(`Tarnija "${k.name}" tunti ära varem saadetud arvete järgi – kontrolli`);
+      } else if (seller.vatNumber && !isEstonianVat(seller.vatNumber)) {
+        // Välismaa tarnija (nt Atlassian, EU372001951): eesti registrikoodi pole, Billberry nõuab sellerRegnumber'it
+        seller = { ...seller, regNumber: seller.vatNumber };
+        warnings.push(`Välismaa tarnija – registrikoodina saadetakse VAT-number ${seller.vatNumber}`);
       } else if (!seller.name && hints[0]) {
         // Ainult logo/pealkiri: nimi vihjest, reg.kood tuleb äriregistrist valida
         seller = { ...seller, name: hints[0][0].toUpperCase() + hints[0].slice(1) };

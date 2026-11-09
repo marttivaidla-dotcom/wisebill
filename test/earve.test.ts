@@ -98,3 +98,44 @@ test("KM-ta arve (0%): XML vastab XSD-le, KM summa 0, kokku = neto", async () =>
   assert.match(xml, /<TotalSum>3000\.00<\/TotalSum>/);
   assert.match(xml, /<Payable>YES<\/Payable><PayDueDate>2026-11-06<\/PayDueDate>/);
 });
+
+// Välismaa arve (pdf-parse tekst): tarnijal eesti reg.koodi pole, ainult VAT-number; USD; makstud PayPaliga; pöördmaksustamine
+test("välismaa tarnija ilma reg.koodita: VAT-number registrikoodiks, USD, makstud, XML vastab XSD-le", async () => {
+  const elkis: Company = { id: "e", name: "Elkis Grupp OÜ", regNumber: "10964577", vatNumber: "EE101019631" };
+  const text = readFileSync("test/fixtures/pdf-text/atlassian.txt", "utf8");
+  const inv = prepareForCompany(parseInvoiceText(text, "Atlassian.pdf"), elkis);
+  assert.equal(inv.number, "IN-EU-003-480-284");
+  assert.equal(inv.date, "2026-09-07");
+  assert.deepEqual([inv.seller.name, inv.seller.regNumber, inv.seller.vatNumber], ["Atlassian Pty Ltd", "EU372001951", "EU372001951"]);
+  assert.equal(inv.buyer.regNumber, "10964577");
+  assert.equal(inv.currency, "USD");
+  assert.equal(inv.paid, true);
+  assert.deepEqual(inv.rows.map((r) => [r.description, r.net, r.vatRate]), [["Jira, Standard, Monthly (USD, Fixed Starter, 15-10-2025) 8 users", 10, 0]]);
+  assert.deepEqual(validate(inv, elkis), []);
+
+  const xml = buildEInvoiceXml([inv], new Date("2026-09-08T10:00:00Z"));
+  const result = await validateXML({
+    xml: [{ fileName: "arve.xml", contents: xml }],
+    schema: [readFileSync("schema/e-invoice_ver1.2.EN.xsd", "utf8")],
+  });
+  assert.deepEqual(result.errors.map((e) => e.rawMessage), []);
+  assert.match(xml, /sellerRegnumber="EU372001951"/);
+  assert.match(xml, /<Currency>USD<\/Currency>/);
+  assert.match(xml, /<Payable>NO<\/Payable>/);
+});
+
+// AWS: summad USD-s, KM lisaks eurodes ("TOTAL VAT EUR 8.45") – eurosummad ei tohi segada USD summasid
+test("kaks valuutat: arve valuuta summade järgi, teise valuuta summad arvutusest välja", async () => {
+  const elkis: Company = { id: "e", name: "Elkis Grupp OÜ", regNumber: "10964577", vatNumber: "EE101019631" };
+  const text = readFileSync("test/fixtures/pdf-text/aws.txt", "utf8");
+  const inv = prepareForCompany(parseInvoiceText(text, "aws.pdf"), elkis);
+  assert.equal(inv.currency, "USD");
+  assert.equal(inv.number, "EUINEE26-96845");
+  assert.equal(inv.date, "2026-11-01");
+  assert.deepEqual([inv.seller.regNumber, inv.seller.vatNumber], ["16527376", "EE102528066"]);
+  assert.deepEqual(inv.rows.map((r) => [r.description, r.net, r.vatRate]), [["AWS Service Charges", 39.35, 24]]);
+  assert.deepEqual({ net: totals(inv).net, vat: totals(inv).vat, gross: totals(inv).gross }, { net: 39.35, vat: 9.44, gross: 48.79 });
+  assert.ok(inv.warnings.some((w) => /USD.*8\.45 EUR.*0\.89509/.test(w)), inv.warnings.join("; "));
+  assert.deepEqual(validate(inv, elkis), []);
+  assert.match(buildEInvoiceXml([inv]), /<TotalSum>48\.79<\/TotalSum><TotalToPay>48\.79<\/TotalToPay><Currency>USD<\/Currency>/);
+});

@@ -42,7 +42,8 @@ export function invoiceIssues(inv: Invoice, company?: Company): Issue[] {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(inv.dueDate)) add("dueDate", "Maksetähtaeg puudub või vale formaat");
   if (!inv.seller.name.trim()) add("seller.name", "Tarnija nimi puudub");
   // e-arve 1.2: sellerRegnumber on kohustuslik, Billberry lükkab tühja tagasi
-  if (!inv.seller.regNumber.trim()) add("seller.regNumber", "Tarnija registrikood puudub");
+  // (välismaa tarnijal tema VAT- või registrinumber)
+  if (!inv.seller.regNumber.trim()) add("seller.regNumber", "Tarnija registrikood puudub (välismaa tarnijal VAT-number)");
   // Billberry: ostja reg.kood = API võtme firma
   if (company && inv.buyer.regNumber !== company.regNumber) add("buyer", "Ostja pole valitud firma");
   if (inv.rows.length === 0) add("rows", "Arvel pole ridu");

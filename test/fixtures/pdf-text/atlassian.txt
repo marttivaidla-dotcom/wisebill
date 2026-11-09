@@ -1,0 +1,112 @@
+Atlassian Pty Ltd,
+Level 6, 341 George St,
+Sydney NSW 2000, Australia
+VAT Number: EU372001951
+Invoice number: IN-EU-003-480-284
+Invoice date: 	Sep 7, 2026
+Invoice
+Bill to:
+Elkis Grupp OÜ
+Tuvi 12/III-14
+Tallinn 10119
+Estonia
++37253460605
+VAT No.: EE101019631
+Sold to:
+Elkis Grupp OÜ
+Tuvi 12/III-14
+Tallinn 10119
+Estonia
+VAT No.: EE101019631
+RECEIPT
+Invoice Total: 	USD 10.00
+Amount paid via PayPal: 	USD 10.00
+Payment due: 	USD 0.00
+PayPal ID: 	i***@elkis.ee
+Thank you for your payment!
+To learn how to manage subscriptions and billing for your cloud products, read
+https://support.atlassian.com/subscriptions-and-billing/resources/
+To manage billing for your cloud products, visit https://admin.atlassian.com/billing
+Got questions? Contact us: https://www.atlassian.com/contact 	Page 1 of 3
+
+-- 1 of 3 --
+
+Invoice
+S.no. Product 	List price
+(USD)
+Discounts
+(USD)
+Credits
+(USD)
+Amount excl.
+tax
+(USD)
+Tax
+(USD)
+Amount
+(USD)
+1 Jira, Standard,
+Monthly (USD, Fixed
+Starter, 15-10-2025)
+8 users
+Site Address:
+elkis-dev.atlassian.net
+Billing period:
+Sep 6, 2026 - Oct 6,
+2026
+Entitlement number:
+E-3S2-4N3-569-C8A
+Licensed to:
+Elkis Grupp OÜ
+10.00 	10.00 	10.00
+2 Time Tracker Lite -
+Jira Project Time
+Reports | Tempo
+Standard MONTHLY
+USD COMMERCIAL
+CLOUD
+8 users
+Site Address:
+elkis-dev.atlassian.net
+Billing period:
+Sep 6, 2026 - Oct 6,
+2026
+Entitlement number:
+E-3S8-8N5-6XZ-F59
+Licensed to:
+Elkis Grupp OÜ
+0.00 	0.00 	0.00
+Got questions? Contact us: https://www.atlassian.com/contact 	Page 2 of 3
+
+-- 2 of 3 --
+
+Invoice
+Total list price
+Total credits
+Sub Total (Total list price - Total credits)
+Total discounts
+Total amount excl. tax
+Total tax applied
+Total billed amount
+Total amount paid
+Payment due
+USD 10.00
+USD 0.00
+USD 10.00
+USD 0.00
+USD 10.00
+USD 0.00
+USD 10.00
+USD 10.00
+USD 0.00
+Additional notes
+All dates and timestamps on the invoice are as per Coordinated Universal Time (UTC) timezone.
+Reverse charge supply: It is the responsibility of the customer to remit any VAT relating to goods or services covered by this invoice to the
+customer's local revenue authorities.
+The total amount shown on this invoice is VAT exclusive.
+To calculate the price of a marketplace app, the app's user tier and the billing cycle is matched with that of the host Atlassian product it's
+integrated with. In case an app integrates with more than one host products, the host product with the highest user tier is considered.
+Got questions? Contact us: https://www.atlassian.com/contact 	Page 3 of 3
+
+-- 3 of 3 --
+

@@ -32,6 +32,12 @@ müügiarved, Excel/CSV import, pangaväljavõtted, Books REST API, Billberry �
 - pdf-parse annab paremale joondatud sildi tabulaatoriga väärtuse järel ("11340532⇥Reg.nr.:") ja rea numbrid enne
   kirjeldust – parser pöörab need ümber. Siltidest lahus kuupäevad: tähtaja sildi korral varaseim = arve, hiliseim = tähtaeg.
 - Reg.koodi olemasolul võetakse tarnija ametlik nimi ja KMKR äriregistrist (OCR-i vead nimes ei loe).
+- Välismaa tarnija (nt Atlassian, "VAT Number: EU372001951", Pty Ltd/GmbH/Inc …): eesti reg.koodi pole → `prepareForCompany`
+  paneb registrikoodiks VAT-numbri (Billberry nõuab `sellerRegnumber`-it), äriregistrist ei otsita. Valuuta ISO koodist (USD),
+  PayPal/"amount paid" = makstud. Fixture: `test/fixtures/pdf-text/atlassian.txt`.
+- Kaks valuutat (AWS: summad USD, KM lisaks EUR): arve valuuta = märk kõige rohkemate summade kõrval (`docCurrency`),
+  teise valuuta summad eemaldatakse enne summade/ridade otsingut (`withoutOtherCurrency`). e-arve 1.2-s kursi välja pole →
+  KM eurodes + kurss hoiatusse. Fixture: `test/fixtures/pdf-text/aws.txt`.
 - `src/lib/prepare.ts` – `prepareForCompany()`: oma firma tuvastatakse reg.koodi/KMKR-i/nime järgi, tarnija = teine.
 - `src/lib/vat.ts` – summad arvutatakse alati ise (`recalcRow`, `totals`, KM määrade kaupa summalt); `invoiceIssues`.
 - `src/lib/export/earve.ts` – e-arve v1.2 XML. **XSD nõuab elementide järjekorda – ära muuda.**

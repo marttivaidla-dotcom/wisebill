@@ -1,0 +1,39 @@
+VAT Invoice
+Email or talk to us about your AWS account or bill, visit console.aws.amazon.com/support
+More information regarding your service charges is available by accessing your Billing Management Console
+Account number:
+481894343994
+Address:
+Elkis Grupp OÜ
+ATTN: Elkis Grupp OÜ / Martti Vaidla
+Parli tee 7, Randvere
+Viimsi, Harjumaa, 74016, EE
+Invoice Summary
+VAT Invoice Number: EUINEE26-96845
+VAT Invoice Date: November 1, 2026
+TOTAL AMOUNT USD 48.79
+TOTAL VAT EUR 8.45
+This VAT Invoice is for the billing period October 1 - October 31, 2026
+Invoice Summary
+AWS Service Charges USD 48.79
+Charges USD 39.35
+Net Charges (After Credits/Discounts, excl. Tax) USD 39.35
+VAT - 24% USD 9.44
+VAT in EUR (1 USD = 0.89509 EUR ) EUR 8.45
+Detail
+AWS Glue USD 0.00
+Amazon Simple Storage Service USD 48.79
+Charges USD 39.35
+VAT USD 9.44
+AWS Data Transfer USD 0.00
+AMAZON WEB SERVICES EMEA SARL
+38 AVENUE JOHN F. KENNEDY, L-1855 LUXEMBOURG
+R.C.S. Luxembourg: B186284
+Amazon Web Services EMEA SARL Eesti filiaal
+Registry code: 16527376
+Sõpruse pst 145, Kristiine linnaosa, Tallinn, Harju maakond
+13425, Estonia, Europe (VAT no: EE102528066)
+1 / 1
+
+-- 1 of 1 --
+
