@@ -25,7 +25,9 @@ müügiarved, Excel/CSV import, pangaväljavõtted, Books REST API, Billberry �
 - KM: kolmik neto + KM = kokku > määr tekstis > "käibemaksu pole mainitud" (paljas "KM" on OCR-i müra) = 0% (`noVatOnDoc`),
   mitte 24%. KMKR loeb mainimiseks ainult numbriga (tühi mallisilt "KMKR: [Kliendi KMKR]" ei loe). Kui tarnija on äriregistri järgi KM-kohustuslane, tuleb hoiatus (`registryVatWarning`), määr jääb dokumendi järgi.
 - Mitu KM-määra (nt kunstiteos KM-ta + haamritasu 24%): rea määr rea enda andmetest, vastu võetakse ainult siis, kui read
-  annavad kokku dokumendi suurima summa; muidu tavaline tee.
+  annavad kokku dokumendi suurima summa; muidu tavaline tee. Tabel "hind kogus ühik KM% summa(KM-ga)": read KM-ga
+  summadest (`findGrossRows`), määr rea %-st, hind × kogus ka OCR-i kaotatud komaga ("4500 400" = 45,00 × 4,00).
+  Fixture: `test/fixtures/ocr/vidinad-ekraan.txt`.
 - Summad ilma senditeta sobivad ainult valuutamärgiga ("3 000 €"). Kuupäev ka sõnadega ("oktoober 23, 2026", "23. oktoober 2026").
   Tähtaja puudumisel kuupäev + 14 päeva.
 - Registrikoodi silt on paindlik (`REG_LABEL`: reg.kood, reg,number, Reg no, Reg:, Äriregistri nr, Company code, R/K …), number ka tühikutega või järgmisel real.

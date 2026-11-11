@@ -96,3 +96,16 @@ test("pildi eeltöötlus hägustusega: üherealine triip (moiree) kaob, jäme t�
   assert.equal(at(20, 10), 255);
   assert.equal(at(33, 40), 0);
 });
+
+test("ekraanifoto: igal real oma KM-määr (24% ja 9%) ja summa KM-ga, OCR kaotas koma ('4500 400' = 45,00 × 4,00)", () => {
+  const inv = read("vidinad-ekraan.txt");
+  assert.equal(inv.number, "2026/27");
+  assert.deepEqual(inv.rows.map((r) => `${r.description}|${r.quantity} ${r.unit}|${r.unitPrice}|${r.vatRate}`), [
+    "Nutikodu stardikomplekt|1 kmpl|189|24",
+    "Liikumisandur|3 tk|29|24",
+    "Paigaldustöö|4 tk|45|24",
+    "Raamat ,Nutikodu algajale”|1 tk|24|9",
+  ]);
+  assert.deepEqual(sums(inv), [480, 111.6, 591.6]);
+  assert.ok(!inv.warnings.some((w) => /KM leitud kogusummast/.test(w)));
+});

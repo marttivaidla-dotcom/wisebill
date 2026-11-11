@@ -1,0 +1,16 @@
+import { createCanvas, loadImage } from "@napi-rs/canvas";
+import { createWorker } from "tesseract.js";
+import { binarize, ocrScale } from "./src/lib/ocr-prep";
+const img = await loadImage(process.argv[2]);
+const s = ocrScale(img.width, img.height);
+const c = createCanvas(Math.round(img.width * s), Math.round(img.height * s));
+const ctx = c.getContext("2d");
+ctx.drawImage(img, 0, 0, c.width, c.height);
+const d = ctx.getImageData(0, 0, c.width, c.height);
+binarize(d as any, 0);
+ctx.putImageData(d, 0, 0);
+const w = await createWorker(["est", "eng"]);
+const { data } = await w.recognize(c.toBuffer("image/png"));
+await w.terminate();
+console.error("conf", data.confidence);
+console.log(data.text);

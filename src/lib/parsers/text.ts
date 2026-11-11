@@ -50,7 +50,7 @@ const HEADER_WORDS = /\b(?:hind|kogus|summa|kokku|kirjeldus|teenus|toode|periood
 // Tabeli päis: vähemalt kaks veerunime või ainult suurtähtedega veerunimega rida
 const isHeader = (l: string) =>
   (l.match(HEADER_WORDS)?.length ?? 0) >= 2 || ((l.match(HEADER_WORDS)?.length ?? 0) >= 1 && l === l.toUpperCase());
-const QTY_UNIT = /(?<![\d.,])(\d+(?:[.,]\d+)?)\s*(tk|h|kuu|aasta|päev|m2|m|jm|pk|kg|l|km)(?![\p{L}])/iu;
+const QTY_UNIT = /(?<![\d.,])(\d+(?:[.,]\d+)?)\s*(tk|h|kuu|aasta|päev|m2|m|jm|pk|kmpl|kg|l|km)(?![\p{L}])/iu;
 
 interface Amount {
   value: number;
@@ -372,11 +372,33 @@ function findRows(lines: string[], totalNet: number, rate: number, mixed = false
   });
 }
 
+/** Rea enda KM-määr ("Raamat 24,00 1,00 tk 9% 26,16"): viimane % enne rea summat, ainult KM-määrad (ka 0). */
+function explicitRate(l: string, last: Amount): number | undefined {
+  const r = [...l.slice(0, last.index).matchAll(/(?<![\d.,])(\d{1,2})(?:[.,]0+)?\s*%/g)].map((m) => Number(m[1])).at(-1);
+  return r !== undefined && (r === 0 || VAT_RATES.includes(r)) ? r : undefined;
+}
+
+/**
+ * Hind ja kogus rea numbritest enne % märki, nii et hind × kogus = neto. OCR kaotab koma ("4500 400" = 45,00 × 4,00),
+ * seega komata arv proovitakse ka /100. Ei leia -> null.
+ */
+function priceQty(before: string, net: number): { price: number; qty: number } | null {
+  const nums = [...before.matchAll(/(?<![\p{L}\d.,])(\d+(?:[.,]\d{1,3})?)(?![\d.,]*\p{L})/gu)].map((m) => {
+    const v = parseNumber(m[1]);
+    return /[.,]/.test(m[1]) || m[1].length < 3 ? [v] : [v, v / 100];
+  });
+  for (let i = 0; i + 1 < nums.length; i++)
+    for (const price of nums[i])
+      for (const qty of nums[i + 1]) if (qty > 0 && near(round2(price * qty), net, 0.011)) return { price, qty };
+  return null;
+}
+
 /**
  * Kassatšeki read: summad on KM-ga, allahindlus eraldi real ("B2B allahindlus 1,60-") liidetakse eelmisele reale.
- * Read peavad summeeruma kogusummaks ja neto (KM-ga summa / (1 + määr)) arve netoks, muidu [].
+ * Rea määr rea enda %-st (mitu määra), muidu dokumendi oma. Read peavad summeeruma kogusummaks ja neto
+ * (KM-ga summa / (1 + määr)) arve netoks (mitme määra korral sildiga netoks, kui see on), muidu [].
  */
-function findGrossRows(lines: string[], gross: number, net: number, rate: number): InvoiceRow[] {
+function findGrossRows(lines: string[], gross: number, net: number, rate: number, labeledNet = NaN): InvoiceRow[] {
   const DISCOUNT = /allahindlus|soodustus|hinnaalandus|discount/i;
   type Cand = { line: number; value: number; discount: boolean };
   const cands: Cand[] = [];
@@ -406,7 +428,19 @@ function findGrossRows(lines: string[], gross: number, net: number, rate: number
       }
       const rows = items.map((it) => {
         const l = lines[it.line];
-        let description = l.slice(0, amountsOf(l, it.line)[0].index).replace(/\b\d+(?:[.,]\d+)?\s*tk\s*x\s*$/i, "").replace(/[€\s=x]+$/i, "").trim();
+        const a = amountsOf(l, it.line);
+        const own = explicitRate(l, a[a.length - 1]);
+        if (own !== undefined) {
+          // tabelirida "Kirjeldus hind kogus ühik KM% summa": kirjeldus enne esimest numbrit
+          const rowNet = round2(it.value / (1 + own / 100));
+          const firstNum = l.search(/\s\d/);
+          const description = (firstNum > 0 ? l.slice(0, firstNum) : l.slice(0, a[0].index)).trim();
+          const pq = priceQty(l.slice(firstNum > 0 ? firstNum : 0, l.lastIndexOf("%")), rowNet);
+          const qu = l.match(QTY_UNIT);
+          const unit = pq && qu && [pq.qty, pq.qty * 100].some((q) => near(parseNumber(qu[1]), q, 0.001)) ? qu[2].toLowerCase() : "tk";
+          return makeRow({ description: description.slice(0, 200) || "Kaup", quantity: pq?.qty ?? 1, unit, unitPrice: pq?.price ?? rowNet, vatRate: own });
+        }
+        let description = l.slice(0, a[0].index).replace(/\b\d+(?:[.,]\d+)?\s*tk\s*x\s*$/i, "").replace(/[€\s=x]+$/i, "").trim();
         // kaup eelmisel real ("2x KOORMAKATE 15M2" / "A 15,95 31,90"); vöötkoodi rida ("1. 2770020326395") mitte
         if (description.replace(/[^\p{L}]/gu, "").length < 3)
           for (let j = it.line - 1; j >= Math.max(0, it.line - 2); j--) {
@@ -421,7 +455,9 @@ function findGrossRows(lines: string[], gross: number, net: number, rate: number
       });
       // netode summa peab klappima arve netoga (ümardus ridade kaupa)
       const rowsNet = round2(rows.reduce((s, r) => s + r.net, 0));
-      return Number.isFinite(net) && !near(rowsNet, net, 0.005) ? [] : rows;
+      const mixed = rows.some((r) => r.vatRate !== rate);
+      const target = mixed ? labeledNet : net;
+      return Number.isFinite(target) && !near(rowsNet, target, mixed ? 0.005 * rows.length : 0.005) ? [] : rows;
     }
   }
   return [];
@@ -561,7 +597,14 @@ export function parseInvoiceText(text: string, filename: string): Invoice {
 
   let rows = mixedRows.length ? mixedRows : Number.isFinite(net) ? findRows(money, net, rate) : [];
   // Kassatšekil on read KM-ga summadega ("4 tk x 1.75 = 7.00 F") – read summeeruvad kogusummaks
-  if (!rows.length && Number.isFinite(gross)) rows = findGrossRows(money, gross, net, rate);
+  // ... ka tabel, kus real on oma KM-määr ja summa KM-ga ("Raamat 24,00 1,00 tk 9% 26,16")
+  let ownRates = false;
+  if (!rows.length && Number.isFinite(gross)) {
+    const labeledNet = labeledAmount(money, /käibemaksuta|km-?ta\b|ilma\s*km|neto|subtotal|vahesumma/i);
+    rows = findGrossRows(money, gross, net, rate, labeledNet);
+    ownRates = rows.some((r) => r.vatRate !== rate);
+    if (ownRates) net = totals({ ...inv, rows }).net;
+  }
   if (rows.length) inv.rows = rows;
   else
     inv.rows.push(
@@ -580,7 +623,7 @@ export function parseInvoiceText(text: string, filename: string): Invoice {
   if (Number.isFinite(gross) && !near(computed, gross, 0.005))
     inv.warnings.push(`Dokumendi kogusumma ${gross} ei klapi arvutatuga ${computed}`);
   if (guessed) inv.warnings.push(`Kogusumma silti ei leitud – võetud dokumendi suurim summa ${gross}, kontrolli`);
-  if (!found && !mixedRows.length && Number.isFinite(gross))
+  if (!found && !mixedRows.length && !ownRates && Number.isFinite(gross))
     inv.warnings.push(inv.noVatOnDoc ? "Dokumendil pole käibemaksu – KM 0%, kontrolli" : rate === 0 ? "KM-ta arve (käibemaksuvaba) – kontrolli" : `KM leitud kogusummast (${rate}%) – kontrolli`);
   if (!rows.length) inv.warnings.push("PDF/OCR: read on koondatud üheks reaks – kontrolli ja jaga vajadusel");
   if (inv.currency !== "EUR") {
