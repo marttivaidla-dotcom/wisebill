@@ -55,11 +55,10 @@ export function prepareForCompany(inv: Invoice, company: Company, known: KnownSu
       (!!p.vatNumber && p.vatNumber === company.vatNumber) ||
       // nimi ka OCR-i müra sees: "of STIVARO OÜ" sisaldab "stivaro"
       (!!p.name && !!bareName(company.name) && ` ${bareName(p.name)} `.includes(` ${bareName(company.name)} `));
-    const others = parties.filter((p) => !isOwn(p));
-    seller = {
-      ...(others.find((p) => isEstonianRegCode(p.regNumber)) || others.find((p) => p.regNumber) || others[0] || { name: "", regNumber: "" }),
-      iban: ibans[0],
-    };
+    // ostjaks märgitud osapool pole tarnija (ka siis, kui oma firmat dokumendil ära ei tunta)
+    const others = parties.filter((p) => !isOwn(p) && !p.buyer);
+    const picked: Party = others.find((p) => isEstonianRegCode(p.regNumber)) || others.find((p) => p.regNumber) || others[0] || { name: "", regNumber: "" };
+    seller = { name: picked.name, regNumber: picked.regNumber, vatNumber: picked.vatNumber, iban: ibans[0] };
     if (!seller.regNumber) {
       const k = findKnown(others, ibans, hints, known);
       if (k) {

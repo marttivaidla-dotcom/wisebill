@@ -19,15 +19,23 @@ müügiarved, Excel/CSV import, pangaväljavõtted, Books REST API, Billberry �
   `common.ts` – ET numbrid/kuupäevad.
 - Kassatšekid: KMKR ilma EE-ta, tšeki nr + kuupäev (ppkkaa) kassatabelist, read KM-ga summadest (allahindlus
   eelmise kauba juurde), makstud (kaart/sularaha) -> `paid`, e-arvel `Payable=NO`. OCR-i "UU/00" -> "OÜ".
-- `src/lib/ocr-prep.ts` – pildi eeltöötlus enne Tesseracti (brauseris canvas): skaleerimine + adaptiivne lävendamine.
-  Fotod (kortsus tšekk, mustriline taust) loevad sellega oluliselt paremini. Testi OCR-i väljundid: `test/fixtures/ocr/`.
-  Kindlus < 60 (nt monitorilt pildistatud arve moiree-mustriga): teine lugemine kerge hägustusega, kõrgem kindlus võidab.
+- `src/lib/ocr-prep.ts` – pildi eeltöötlus enne Tesseracti (brauseris canvas). Digitaalne pilt (`isDigital`: > 50% puhast
+  valget; ekraanitõmmis, salvestatud arve) halltoonis suurendatult ~4000 px (`digitalScale`) – **lävendamine rikub peent
+  kirja**. Foto (kortsus tšekk, mustriline taust): skaleerimine + adaptiivne lävendamine. Kindlus < 60: teised variandid
+  (hägustusega moiree vastu), kõrgem kindlus võidab. Fixture pildist samamoodi: `npx tsx test/make-ocr-fixture.mts <pilt>`,
+  väljundid `test/fixtures/ocr/`.
 - KM: kolmik neto + KM = kokku > määr tekstis > "käibemaksu pole mainitud" (paljas "KM" on OCR-i müra) = 0% (`noVatOnDoc`),
   mitte 24%. KMKR loeb mainimiseks ainult numbriga (tühi mallisilt "KMKR: [Kliendi KMKR]" ei loe). Kui tarnija on äriregistri järgi KM-kohustuslane, tuleb hoiatus (`registryVatWarning`), määr jääb dokumendi järgi.
 - Mitu KM-määra (nt kunstiteos KM-ta + haamritasu 24%): rea määr rea enda andmetest, vastu võetakse ainult siis, kui read
   annavad kokku dokumendi suurima summa; muidu tavaline tee. Tabel "hind kogus ühik KM% summa(KM-ga)": read KM-ga
   summadest (`findGrossRows`), määr rea %-st, hind × kogus ka OCR-i kaotatud komaga ("4500 400" = 45,00 × 4,00).
-  Fixture: `test/fixtures/ocr/vidinad-ekraan.txt`.
+  Fixture: `test/fixtures/ocr/vidinad-ekraan.txt`. Päises "KM%" veerg -> paljas arv rea summa ees on rea määr
+  ("4h 9 40,00"); vahesumma rea lõpus ("… Kokku km-ta 20,00") pole arverida. Fixture: `test/fixtures/ocr/isolta-naidis.txt`.
+- Kogusumma sildi tugevuse järgi (`grossByLabel`): tasumiseks/kokku tasuda > arve summa > kokku; "Kokku km-ta",
+  "Käibemaks kokku" pole kogusumma. Ristkontroll: dokumendi "summa km-ta" ja "käibemaks" (suurim või vahesummade summa)
+  peavad klappima arvutatuga, muidu hoiatus (vale rea KM-määr jääb nii silma).
+- Ostja märge `Party.buyer` ("Arve Klient OÜ-le", "Arve saaja:", "Klient:", "Ostja") – ostjat ei pakuta kunagi tarnijaks.
+  Jaluse veergudest liidetud real nimi `nameInColumns`. Kehtetu kuupäev (OCR "00.00.2017") = "".
 - Summad ilma senditeta sobivad ainult valuutamärgiga ("3 000 €"). Kuupäev ka sõnadega ("oktoober 23, 2026", "23. oktoober 2026").
   Tähtaja puudumisel kuupäev + 14 päeva.
 - Registrikoodi silt on paindlik (`REG_LABEL`: reg.kood, reg,number, Reg no, Reg:, Äriregistri nr, Company code, R/K …), number ka tühikutega või järgmisel real.

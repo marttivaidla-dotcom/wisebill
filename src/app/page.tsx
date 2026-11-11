@@ -11,7 +11,7 @@ import { billberryReady, companyIssues } from "@/lib/company";
 import { findDuplicate, toSentEntry, type DuplicateHit } from "@/lib/duplicates";
 import { store } from "@/lib/store";
 import { callBillberry, downloadFile, parsePdf, parseText } from "@/lib/upload";
-import { binarize, LOW_CONFIDENCE, ocrScale } from "@/lib/ocr-prep";
+import { binarize, digitalScale, isDigital, LOW_CONFIDENCE, ocrScale } from "@/lib/ocr-prep";
 import { Field, Step } from "./ui";
 
 const VAT_RATES = [24, 22, 13, 9, 5, 0];
@@ -38,19 +38,43 @@ async function registrySuggestions(inv: Invoice): Promise<Invoice["suggestions"]
   return out.slice(0, 6).map(({ name, regNumber, address }) => ({ name, regNumber, address }));
 }
 
-/** Foto/skaneering OCR-i jaoks: õige suurus + adaptiivne lävendamine (vt ocr-prep.ts). Viga -> originaal. */
-async function prepareImage(file: File, blur = 0): Promise<Blob> {
+type Prep = "digital" | "photo" | "photo-blur";
+
+/** Kas pilt on digitaalne (ekraanitõmmis, salvestatud arve) – vt ocr-prep.ts isDigital. */
+async function imageKind(file: File): Promise<"digital" | "photo"> {
+  try {
+    const bmp = await createImageBitmap(file);
+    const canvas = document.createElement("canvas");
+    canvas.width = bmp.width;
+    canvas.height = bmp.height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+    ctx.drawImage(bmp, 0, 0);
+    return isDigital(ctx.getImageData(0, 0, bmp.width, bmp.height)) ? "digital" : "photo";
+  } catch {
+    return "photo";
+  }
+}
+
+/**
+ * Pilt OCR-i jaoks (vt ocr-prep.ts). Viga -> originaal.
+ *  - digital: suurendatult (~4000 px), ilma lävendamiseta – peen kiri jääb terveks
+ *  - photo: õige suurus + adaptiivne lävendamine; photo-blur: enne kerge hägustus (moiree)
+ */
+async function prepareImage(file: File, prep: Prep): Promise<Blob> {
   try {
     const bmp = await createImageBitmap(file); // arvestab EXIF-i pööramist
-    const s = ocrScale(bmp.width, bmp.height);
+    const s = prep === "digital" ? digitalScale(bmp.width, bmp.height) : ocrScale(bmp.width, bmp.height);
     const canvas = document.createElement("canvas");
     canvas.width = Math.round(bmp.width * s);
     canvas.height = Math.round(bmp.height * s);
     const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+    ctx.imageSmoothingQuality = "high";
     ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
-    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    binarize(img, blur);
-    ctx.putImageData(img, 0, 0);
+    if (prep !== "digital") {
+      const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      binarize(img, prep === "photo-blur" ? 1 : 0);
+      ctx.putImageData(img, 0, 0);
+    }
     return await new Promise<Blob>((ok, fail) => canvas.toBlob((b) => (b ? ok(b) : fail(new Error("toBlob"))), "image/png"));
   } catch {
     return file;
@@ -110,11 +134,15 @@ export default function Home() {
           setStatus(`Loen pildilt teksti: ${file.name} … (võib võtta kuni minuti)`);
           const { createWorker } = await import("tesseract.js");
           const worker = await createWorker(["est", "eng"]);
-          let { data } = await worker.recognize(await prepareImage(file));
-          // Madal kindlus (nt monitorilt pildistatud arve moiree-mustriga): teine katse hägustatult, parem võidab
-          if (data.confidence < LOW_CONFIDENCE) {
-            const second = (await worker.recognize(await prepareImage(file, 1))).data;
-            if (second.confidence > data.confidence) data = second;
+          // Digitaalne pilt: halltoon suurendatult; foto: lävendatult. Madal kindlus -> teised variandid
+          // (nt monitorilt pildistatud arve moiree-mustriga: hägustatult), kõrgeim kindlus võidab.
+          const kind = await imageKind(file);
+          const order: Prep[] = kind === "digital" ? ["digital", "photo", "photo-blur"] : ["photo", "photo-blur", "digital"];
+          let { data } = await worker.recognize(await prepareImage(file, order[0]));
+          for (const prep of order.slice(1)) {
+            if (data.confidence >= LOW_CONFIDENCE) break;
+            const next = (await worker.recognize(await prepareImage(file, prep))).data;
+            if (next.confidence > data.confidence) data = next;
           }
           await worker.terminate();
           inv = await parseText(data.text, file.name);

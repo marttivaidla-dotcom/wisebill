@@ -65,3 +65,24 @@ export function ocrScale(width: number, height: number): number {
   if (long > 4000) return 4000 / long;
   return 1;
 }
+
+/**
+ * Digitaalne pilt (ekraanitõmmis, salvestatud arve): suurem osa pikslitest on puhas valge taust.
+ * Sellist pilti lävendamine rikub (peen kiri murdub) – Tesseract loeb seda paremini halltoonis ja rohkem suurendatult.
+ * Foto (paber, vari, kortsud) taust pole kunagi ühtlaselt valge.
+ */
+export function isDigital(img: Pixels): boolean {
+  const { data, width, height } = img;
+  const n = width * height;
+  const step = Math.max(1, Math.floor(n / 200_000)); // valim
+  let white = 0, total = 0;
+  for (let i = 0; i < n; i += step, total++)
+    if (data[i * 4] >= 248 && data[i * 4 + 1] >= 248 && data[i * 4 + 2] >= 248) white++;
+  return white / total > 0.5;
+}
+
+/** Digitaalse pildi skaala: pikem külg ~4000 px (väike 650 px arve-pilt ~6×) – väikesed tähed loetakse siis õigesti. */
+export function digitalScale(width: number, height: number): number {
+  const long = Math.max(width, height);
+  return long < 4000 ? Math.min(6, 4000 / long) : 4000 / long;
+}

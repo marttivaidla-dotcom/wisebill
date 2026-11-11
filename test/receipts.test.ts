@@ -109,3 +109,29 @@ test("ekraanifoto: igal real oma KM-määr (24% ja 9%) ja summa KM-ga, OCR kaota
   assert.deepEqual(sums(inv), [480, 111.6, 591.6]);
   assert.ok(!inv.warnings.some((w) => /KM leitud kogusummast/.test(w)));
 });
+
+test("Isolta näidis: KM% veerg ilma %-ta (0/9/20), vahesummad pole read, tasumiseks kokku, ostja 'Klient OÜ-le' pole tarnija", () => {
+  const raw = parseInvoiceText(readFileSync("test/fixtures/ocr/isolta-naidis.txt", "utf8"), "arvepohi.webp");
+  assert.equal(raw.candidates!.parties.find((p) => p.name === "Klient OÜ")?.buyer, true);
+  const inv = prepareForCompany(raw, company);
+  assert.deepEqual([inv.number, inv.date, inv.dueDate, inv.referenceNumber], ["510", "2017-03-09", "2017-03-23", "5102"]);
+  assert.equal(inv.seller.name, "Arve Saatja Ettevõtte Nimi OÜ");
+  assert.deepEqual(inv.rows.map((r) => `${r.description}|${r.quantity} ${r.unit}|${r.unitPrice}|${r.vatRate}`), [
+    "789 Kolmas toode|2 min|10|0",
+    "456 Teine toode|4 h|10|9",
+    "123 Esimene toode|1 tk|10|20",
+    "012 Neljas toode|1 kg|10|20",
+  ]);
+  assert.deepEqual(sums(inv), [80, 7.6, 87.6]);
+});
+
+test("kehtetu kuupäev (OCR '00.00.2017') ei ole kuupäev", async () => {
+  const { parseDate } = await import("../src/lib/parsers/common");
+  assert.deepEqual(["00.00.2017", "31.02.2026", "29.02.2024", "23.03.2017"].map(parseDate), ["", "", "2024-02-29", "2017-03-23"]);
+});
+
+test("ristkontroll: vale KM määr real -> hoiatus, kui dokumendi 'Summa käibemaksuta' ei klapi", () => {
+  const text = readFileSync("test/fixtures/ocr/vidinad-ekraan.txt", "utf8").replace(" 9% ", " ");
+  const inv = parseInvoiceText(text, "x.webp");
+  assert.ok(inv.warnings.some((w) => /summa km-ta \(480\) ei klapi/.test(w)), inv.warnings.join("; "));
+});

@@ -50,7 +50,9 @@ const HEADER_WORDS = /\b(?:hind|kogus|summa|kokku|kirjeldus|teenus|toode|periood
 // Tabeli päis: vähemalt kaks veerunime või ainult suurtähtedega veerunimega rida
 const isHeader = (l: string) =>
   (l.match(HEADER_WORDS)?.length ?? 0) >= 2 || ((l.match(HEADER_WORDS)?.length ?? 0) >= 1 && l === l.toUpperCase());
-const QTY_UNIT = /(?<![\d.,])(\d+(?:[.,]\d+)?)\s*(tk|h|kuu|aasta|päev|m2|m|jm|pk|kmpl|kg|l|km)(?![\p{L}])/iu;
+// Vahe-/kogusumma silt: "Kokku km-ta", "Käibemaks 9%", "Summa", "Tasumiseks"
+const SUBTOTAL = /kokku|km-?ta\b|käibemaks|\bsumma\b|tasumis|total|subtotal/i;
+const QTY_UNIT = /(?<![\d.,])(\d+(?:[.,]\d+)?)\s*(tk|h|min|kuu|aasta|päev|m2|m|jm|pk|kmpl|kg|l|km)(?![\p{L}])/iu;
 
 interface Amount {
   value: number;
@@ -109,6 +111,59 @@ function labeledAmount(lines: string[], label: RegExp): number {
     }
   }
   return NaN;
+}
+
+/**
+ * Kogusumma sildi järgi, tugevaim silt enne: "Tasumiseks kokku" / "Kokku tasuda" > "Arve summa" > "Kokku".
+ * Vahesummad ("Kokku km-ta", "Kokku käibemaks", "Summa käibemaksuta") ei ole kogusumma; mitme sama sildi korral suurim.
+ */
+function grossByLabel(lines: string[]): number {
+  const NOT_GROSS = /km-?ta\b|käibemaksuta|ilma\s*km|käibemaks(?!uga)|\bkm\s*kokku|neto|vahesumma|subtotal|total\s*vat/i;
+  const groups = [
+    /tasumiseks|kokku\s*(?:tasuda|maksta)|tasumisele|tasuda|maksta|total\s*due|amount\s*due|grand\s*total|balance\s*due/i,
+    /arve\s*summa|summa\s*kokku|invoice\s*total|total\s*billed|kokku\s*km-?ga|summa\s*km-?ga/i,
+    /kokku|\btotal\b/i,
+  ];
+  for (const g of groups) {
+    const found: number[] = [];
+    lines.forEach((l, i) => {
+      const m = l.match(g);
+      // "Käibemaks kokku 7,60" (silt kokku liidetud: "Käibemakskokku") pole kogusumma
+      if (!m || NOT_GROSS.test(l.slice(m.index!)) || /(?:käibemaks|\bkm|\bvat)\s*$/i.test(l.slice(0, m.index))) return;
+      // summa samal real sildi järel või (veergudes) järgmistel ridadel
+      for (let j = i; j < Math.min(lines.length, i + 4); j++) {
+        const a = amountsOf(j === i ? l.slice(m.index!) : lines[j], j);
+        if (a.length) {
+          found.push(a[a.length - 1].value);
+          break;
+        }
+      }
+    });
+    if (found.length) return Math.max(...found);
+  }
+  return NaN;
+}
+
+/** Summad siltidega ridadel (viimane summa sildi järel), välja arvatud read, kus on `not`. */
+function labeledValues(lines: string[], label: RegExp, not: RegExp): number[] {
+  const found: number[] = [];
+  lines.forEach((l, i) => {
+    const m = l.match(label);
+    if (!m || not.test(l)) return;
+    const a = amountsOf(l.slice(m.index!), i);
+    if (a.length) found.push(a[a.length - 1].value);
+  });
+  return found;
+}
+
+/**
+ * Kas arvutatud summa klapib dokumendi siltidega summadega: võrdub suurimaga (üldsumma vahesummade seas)
+ * või kõigi summaga (ainult vahesummad määrade kaupa). Silte pole -> true.
+ */
+function fitsLabeled(values: number[], computed: number, gross: number): boolean {
+  const v = [...new Set(values)].filter((x) => x > 0 && x < gross);
+  if (!v.length) return true;
+  return near(Math.max(...v), computed, 0.011) || near(round2(v.reduce((s, x) => s + x, 0)), computed, 0.011);
 }
 
 /** "Nimi OÜ <muud veerud>" -> "Nimi OÜ" (ettevõtlusvorm lõpus); vorm ees ("OÜ Nimi") või puudub -> "". */
@@ -192,6 +247,19 @@ function foreignRegOf(l: string): string {
   return /^[A-Z]{2}\d{8,12}$/i.test(v.replace(/\s/g, "")) ? "" : v; // "EE101234567" jms on VAT
 }
 
+/**
+ * Firma nimi veergudest liidetud real: ettevõtlusvormile eelnevad sõnad kuni sildi, numbri või eraldajani.
+ * "BIC/SWIFT Arveldusarve number / IBAN Arve Saatja Ettevõtte Nimi OÜ Tel: +372…" -> "Arve Saatja Ettevõtte Nimi OÜ".
+ */
+export function nameInColumns(l: string): string {
+  // vorm sõna lõpus, mitte "Klient OÜ-le"
+  const m = l.match(new RegExp(String.raw`${LEGAL_FORM.source}(?![-\p{L}])`, "u"));
+  if (!m || !m.index) return "";
+  const before = l.slice(0, m.index).split(/\b(?:IBAN|SWIFT|BIC|number|nr|tel|telefon|e-?post|e-?mail|aadress|pank)\b|[\/:|;,]|\d/i).at(-1)!.trim();
+  const words = before.match(/\p{L}{2,}/gu) ?? [];
+  return words.length && !/@|https?:|\bpank\b|\bbank\b/i.test(before) ? `${before} ${m[0]}` : "";
+}
+
 /** Kõik dokumendis nimetatud firmad (registrikoodiga ja ilma) dokumendi järjekorras. */
 function findParties(lines: string[]): Party[] {
   const out: (Party & { line: number })[] = [];
@@ -208,8 +276,13 @@ function findParties(lines: string[]): Party[] {
   const key = (s: string) => s.toLowerCase().replace(/\s+/g, " ");
   lines.forEach((l, i) => {
     // Summadega või numbrirohke rida on tabelirida, mitte firma nimi
-    if (l.length > 80 || !LEGAL_FORM.test(l) || NOT_NAME.test(l) || /^kasutaja:/i.test(l) || amountsOf(l, i).length || /\d{4,}/.test(l.replace(COLUMN_LABEL, ""))) return;
-    const name = upToLegalForm(l.replace(PARTY_LABEL, "")) || l.replace(PARTY_LABEL, "").replace(COLUMN_LABEL, "").trim();
+    if (!LEGAL_FORM.test(l) || /^kasutaja:/i.test(l) || amountsOf(l, i).length) return;
+    let name = "";
+    if (l.length > 80 || NOT_NAME.test(l) || /\d{4,}/.test(l.replace(COLUMN_LABEL, ""))) {
+      // jalus, kus OCR liitis veerud: "BIC/SWIFT Arveldusarve number / IBAN Arve Saatja OÜ Tel: +372…"
+      name = nameInColumns(l);
+      if (!name) return;
+    } else name = upToLegalForm(l.replace(PARTY_LABEL, "")) || l.replace(PARTY_LABEL, "").replace(COLUMN_LABEL, "").trim();
     if (out.some((p) => key(p.name).includes(key(name)) || key(name).includes(key(p.name) || "\0"))) return;
     // KMKR ja välismaa registrinumber samal real või aadressi all (kuni järgmise firma/sildini)
     let vatNumber = vatOf(l);
@@ -222,6 +295,30 @@ function findParties(lines: string[]): Party[] {
     out.push({ name: name.slice(0, 100), regNumber, vatNumber, line: i });
   });
   return out.sort((a, b) => a.line - b.line).map(({ line: _, ...p }) => p);
+}
+
+// Ostja sildid: "Arve saaja:", "Klient:", "Ostja", "Maksja", "Bill to"
+const BUYER_LABEL = /^(?:arve\s*saaja|saaja|klient|ostja|maksja(?:\s*nimi)?|tellija|bill\s*to|billed\s*to|customer|buyer|invoice\s*to)\b\s*:?\s*/i;
+
+/**
+ * Märgib ostja: nimi lauses "Arve Klient OÜ-le …" / "… OÜ-le toodete eest" või ostja sildi järel (samal või järgmisel real).
+ * Nii ei pakuta ostjat tarnijaks, kui oma firmat dokumendil ära ei tunta.
+ */
+function markBuyers(parties: Party[], lines: string[]): Party[] {
+  const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\d]+/gu, " ").trim();
+  const names = new Set<string>();
+  for (const [i, l] of lines.entries()) {
+    for (const m of l.matchAll(new RegExp(String.raw`([\p{Lu}][\p{L}\d&.' -]{1,60}?\s(?:OÜ|AS|MTÜ|FIE|SA|UÜ|TÜ))-(?:le|lt|ile)\b`, "gu")))
+      names.add(norm(m[1].replace(/^(?:arve|tasumiseks)\s+/i, "")));
+    const label = l.match(BUYER_LABEL);
+    if (!label) continue;
+    const rest = l.slice(label[0].length).trim();
+    names.add(norm(rest || lines[i + 1] || ""));
+  }
+  names.delete("");
+  return parties.map((p) =>
+    [...names].some((n) => norm(p.name) === n || (norm(p.name).length > 3 && n.startsWith(norm(p.name)))) ? { ...p, buyer: true } : p,
+  );
 }
 
 /** Tarnija vihjed: pealkiri "<Nimi> arve" dokumendi alguses ja veebiaadresside/e-posti domeenid (väiketähtedes). */
@@ -258,11 +355,14 @@ function vatByRate(lines: string[]): Map<number, number> {
 }
 
 /** Rea KM-määr mitme määraga arvel: % summade järel, siis hinna km-ga ja km-ta suhe, siis % enne summasid; "-" või muu = 0. */
-function lineRate(l: string, a: Amount[]): number {
+function lineRate(l: string, a: Amount[], rateColumn = false): number {
   const percents = (s: string) =>
     [...s.matchAll(/(?<![\d.,])(\d{1,2})(?:[.,]\d+)?\s*%/g)].map((m) => Number(m[1])).filter((r) => r === 0 || VAT_RATES.includes(r));
   const after = percents(l.slice(a[0].index)).at(-1);
   if (after !== undefined) return after;
+  // päises "KM%" veerg, real paljas arv rea summa ees: "Teine toode 10,00 4h 9 40,00"
+  const bare = rateColumn ? l.slice(0, a[a.length - 1].index).match(/(?<![\d.,])(\d{1,2})\s+$/) : null;
+  if (bare && (Number(bare[1]) === 0 || VAT_RATES.includes(Number(bare[1])))) return Number(bare[1]);
   for (const x of a)
     for (const y of a) {
       const r = x.value > y.value ? rateOf(y.value, round2(x.value - y.value)) : undefined;
@@ -289,7 +389,7 @@ function numberedCell(lines: string[], at: number, used: Set<number>): string {
 }
 
 /** Tabeliread, mille netod annavad järjest kokku arve neto. Ei leia -> []. mixed: igal real oma KM-määr. */
-function findRows(lines: string[], totalNet: number, rate: number, mixed = false): InvoiceRow[] {
+function findRows(lines: string[], totalNet: number, rate: number, mixed = false, rateColumn = false): InvoiceRow[] {
   type Cand = { line: number; net: number; vat?: number; amounts: Amount[] };
   const triples: Cand[] = [];
   const singles: Cand[] = [];
@@ -301,6 +401,9 @@ function findRows(lines: string[], totalNet: number, rate: number, mixed = false
     const words = l.slice(0, a[0].index).split(/\s+/);
     if (TOTAL_WORDS.test(words[0]) || (TOTAL_WORDS.test(words.slice(0, 2).join(" ")) && !QTY_UNIT.test(l))) return;
     if (isVatSummary(l, a)) return;
+    // vahesumma rea lõpus: "Toote nr 789 ei ole KM Kokku km-ta 20,00" (sildi sõnad vahetult summa ees)
+    const lead = l.slice(a.length > 1 ? a[a.length - 2].index : 0, a[a.length - 1].index).split(/\s+/).filter(Boolean).slice(-3).join(" ");
+    if (SUBTOTAL.test(lead)) return;
     const v = a.map((x) => x.value);
     // neto, KM, kokku järjest real (nt "Teenus 300,00 € 1 tk 300,00 € 72,00 € 372,00 €")
     for (let k = v.length - 3; k >= 0; k--)
@@ -345,7 +448,7 @@ function findRows(lines: string[], totalNet: number, rate: number, mixed = false
       }
       description = [...prev, description].join(" ").replace(/\s+/g, " ").trim();
     }
-    description = description.replace(new RegExp(String.raw`(?:\s*\b(?:${CODES})\b)+$`), "").trim();
+    description = description.replace(new RegExp(String.raw`(?:\s*\b(?:${CODES})\b)+$`), "").replace(/^\d{1,3}\.\s+(?=\S)/, "").trim();
     // Üldine sõna ("Charges") teenuse nime all, mille summa = rea neto + KM: "Amazon Simple Storage Service USD 48.79" / "Charges USD 39.35"
     if (/^(?:charges|tasud|teenustasu|net\s*charges)$/i.test(description) && c.line > 0) {
       const above = amountsOf(lines[c.line - 1], c.line - 1);
@@ -353,7 +456,7 @@ function findRows(lines: string[], totalNet: number, rate: number, mixed = false
       if (name && near(above[above.length - 1].value, round2(c.net * (1 + (c.vat !== undefined ? c.vat / c.net : rate / 100))), 0.02))
         description = name;
     }
-    const rowRate = c.vat !== undefined ? (rateOf(c.net, c.vat) ?? rate) : mixed ? lineRate(l, c.amounts) : rate;
+    const rowRate = c.vat !== undefined ? (rateOf(c.net, c.vat) ?? rate) : mixed ? lineRate(l, c.amounts, rateColumn) : rate;
     const qu = l.match(QTY_UNIT);
     // kogus ilma ühikuta kirjelduse lõpus: "Small format 1 3 000 €"
     const bare = qu ? null : description.match(/\s(\d{1,4}(?:[.,]\d+)?)$/);
@@ -509,7 +612,7 @@ export function parseInvoiceText(text: string, filename: string): Invoice {
     })
     .replace(/[  ]+/g, " ")
     // summa sõnadega ("… EUR JA 00 SENTI") pole firma
-    .replace(/(?<=\p{L}{2,} )(?:UU|00|0Ü|0U|ÜÜ|OÜ\.)(?= |$)(?! ?(?:senti|cents?)\b)/gimu, "OÜ");
+    .replace(/(?<=\p{L}{2,} )(?:UU|00|0Ü|0U|O0|OO|ÜÜ|OÜ\.)(?= |$)(?! ?(?:senti|cents?)\b)/gimu, "OÜ");
   const lines = t.split("\n").map((l) => l.trim()).filter(Boolean);
 
   inv.number =
@@ -544,14 +647,15 @@ export function parseInvoiceText(text: string, filename: string): Invoice {
   }
   inv.referenceNumber = find(t, /viitenumber\s*[.:]?\s*(\d{2,20})/i) || undefined;
 
-  const parties = findParties(lines);
+  const parties = markBuyers(findParties(lines), lines);
   const ibans = [...new Set([...t.matchAll(/\b(EE\d{2}(?:\s?\d{4}){4})\b/g)].map((m) => m[1].replace(/\s/g, "")))];
   inv.candidates = { parties, ibans };
   inv.hints = findHints(lines, t);
   // eesti registrikoodiga osapool enne välismaa registrinumbriga oma (AWS: Eesti filiaal, mitte Luxembourgi SARL)
   const est = (p: Party) => /^\d{8}$/.test(p.regNumber);
   const withReg = [...parties.filter(est), ...parties.filter((p) => p.regNumber && !est(p))];
-  const seller = withReg[0] ?? parties[0];
+  // ostjaks märgitud osapool ("Arve Klient OÜ-le", "Arve saaja:") pole kunagi vaikimisi tarnija
+  const seller = withReg.find((p) => !p.buyer) ?? parties.find((p) => !p.buyer) ?? withReg[0] ?? parties[0];
   inv.seller = { ...(seller ?? inv.seller), iban: ibans[0] };
   inv.buyer = withReg[1] ?? parties.find((p) => p !== seller) ?? inv.buyer;
 
@@ -566,7 +670,7 @@ export function parseInvoiceText(text: string, filename: string): Invoice {
   let net = NaN;
   let rate = rateFound || DEFAULT_VAT;
   let mixedRows: InvoiceRow[] = [];
-  let gross = found?.gross ?? labeledAmount(money, /kokku\s*(?:tasuda|maksta)|tasumisele|tasuda|arve\s*summa|summa\s*kokku|kokku|total\s*due|amount\s*due|grand\s*total|invoice\s*total|total\s*billed/i);
+  let gross = found?.gross ?? grossByLabel(money);
   // vahesumma ainult siis, kui lõppsummat pole – tarne võib sinna veel lisanduda
   if (!Number.isFinite(gross)) gross = labeledAmount(money, /vahesumma|subtotal/i);
   // Silt võib OCR-is kaotsi minna ("Kokku" -> "Moki"): kogusumma on dokumendi suurim summa
@@ -586,7 +690,8 @@ export function parseInvoiceText(text: string, filename: string): Invoice {
   const top = all.length ? Math.max(...all.map((a) => a.value)) : NaN;
   if ((found && top > found.gross + 0.01) || vats.size > 1) {
     const vatSum = vats.size ? [...vats.values()].reduce((s, v) => s + v, 0) : (found?.vat ?? 0);
-    const candidate = findRows(money, round2(top - vatSum), rate, true);
+    const rateColumn = lines.some((l) => isHeader(l) && /\b(?:km|vat|käibemaks)\s*-?\s*(?:%|määr)/i.test(l));
+    const candidate = findRows(money, round2(top - vatSum), rate, true, rateColumn);
     const isMixed = new Set(candidate.map((r) => r.vatRate)).size > 1;
     if (isMixed && near(totals({ ...inv, rows: candidate }).gross, top, 0.02)) mixedRows = candidate;
   }
@@ -619,9 +724,21 @@ export function parseInvoiceText(text: string, filename: string): Invoice {
 
   if (!inv.number) inv.warnings.push("Arve numbrit ei tuvastatud");
   if (!Number.isFinite(net)) inv.warnings.push("Summasid ei tuvastatud – sisesta käsitsi");
-  const computed = totals(inv).gross;
+  const sum = totals(inv);
+  const computed = sum.gross;
   if (Number.isFinite(gross) && !near(computed, gross, 0.005))
     inv.warnings.push(`Dokumendi kogusumma ${gross} ei klapi arvutatuga ${computed}`);
+  // Ristkontroll dokumendi neto ja KM kogusummaga (mitme vahesumma korral suurim = kogu arve oma)
+  else if (Number.isFinite(gross)) {
+    const NET_LABEL = /km-?ta\b|käibemaksuta|ilma\s*km|neto|subtotal|vahesumma/i;
+    const docNet = labeledValues(money, NET_LABEL, /km-?ga\b|käibemaksuga/i);
+    const docVat = labeledValues(money, /käibemaks|\bkm\b|\bvat\b/i,
+      new RegExp(String.raw`${NET_LABEL.source}|km-?ga\b|käibemaksu(?:ga|kohustuslase)|kmkr|\bkm-?\s*nr|vat\s*(?:number|no|id|reg)|tasumis|tasuda|maksta|\btotal\b(?!\s*vat)`, "i"));
+    if (!fitsLabeled(docNet, sum.net, gross))
+      inv.warnings.push(`Dokumendi summa km-ta (${[...new Set(docNet)].join(" / ")}) ei klapi arvutatuga ${sum.net} – kontrolli ridade KM määrasid`);
+    else if (!fitsLabeled(docVat, sum.vat, gross))
+      inv.warnings.push(`Dokumendi käibemaks (${[...new Set(docVat)].join(" / ")}) ei klapi arvutatuga ${sum.vat} – kontrolli ridade KM määrasid`);
+  }
   if (guessed) inv.warnings.push(`Kogusumma silti ei leitud – võetud dokumendi suurim summa ${gross}, kontrolli`);
   if (!found && !mixedRows.length && !ownRates && Number.isFinite(gross))
     inv.warnings.push(inv.noVatOnDoc ? "Dokumendil pole käibemaksu – KM 0%, kontrolli" : rate === 0 ? "KM-ta arve (käibemaksuvaba) – kontrolli" : `KM leitud kogusummast (${rate}%) – kontrolli`);

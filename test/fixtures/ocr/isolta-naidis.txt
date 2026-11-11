@@ -1,0 +1,33 @@
+ARVE 1(1)
+Arve number 510
+65 isolta Viitenumber 5102
+Arve kuupäev 09.03.2017
+i i Makse 23.03.2017
+ee ON, Duikiini ikk; 00321 m tähtaeg 00.00.2017
+Katetometamse vis
+. Maksebrgmus 14 päeva
+Klient OÜ Arve väljastas Arve Väljastaja Nimi
+Aus Mees Selgitus Solg'tus
+00123 Pärnumaa Prowensoorde os tam se tähtaeg 7 päeva
+Arve Klient OÜ-le toodete ja teenuste eest.
+Toodenr Kirjeldus Ühikuhind € Kogus KM% Kokku €
+789 Kolmas toode 10,00 2 min 0 20,00
+Toote nr 789 ei ole KM Kokku km-ta 20,00
+Käibemaks 0%
+2. 456 Teine toode 10,00 4h 9 40,00
+Kokku km-ta 40,00
+Käibemaks 9% 3,60
+3. 123 Esimene toode 10,00 1 tk 20 10,00
+4. 012 Neljas toode 10,00 1 kg 20 10,00
+Kokku km-ta 20,00
+Käibemaks 20% 4,00
+Kokkukm-ta € 80,00
+Käibemakskokku € — 7,60
+Tasumisekskokku € 87,60
+Maksetähtaeg Viitenumber
+23.03.2017 5102 Kokku 87,60€
+BIC/SWIFT  Arveldusarve number / IBAN Arve Saatja Ettevõtte Nimi O0 Tel: +37200000000
+NDEAFIHH EE12 3456 7890 1234 5 Panga Aadress 123 eesnimi.perekonnanimi mail.ee
+nimi 00321 Tallinn Reg nr: 012345678
+KMKR nr: EE12345678
+

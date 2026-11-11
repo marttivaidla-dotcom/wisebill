@@ -8,6 +8,7 @@ export interface Party {
   regNumber: string; // registrikood
   vatNumber?: string; // KMKR nr
   iban?: string;
+  buyer?: boolean; // dokumendil ostjana märgitud ("Arve X OÜ-le", "Arve saaja:") – ei pakuta tarnijaks
 }
 
 export interface InvoiceRow {

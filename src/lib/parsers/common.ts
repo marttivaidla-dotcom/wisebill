@@ -33,18 +33,23 @@ export function parseDate(v: unknown): string {
   }
   const s = String(v ?? "").trim();
   let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-  if (m) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+  if (m) return iso(m[1], m[2], m[3]);
   m = s.match(/^(\d{1,2})[./](\d{1,2})[./](\d{2,4})/);
-  if (m) {
-    const y = m[3].length === 2 ? `20${m[3]}` : m[3];
-    return `${y}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
-  }
+  if (m) return iso(m[3].length === 2 ? `20${m[3]}` : m[3], m[2], m[1]);
   // kuu sõnaga: "oktoober 23, 2026" (WooCommerce) või "23. oktoober 2026"
   m = s.match(/^(\p{L}{3,})\.?\s+(\d{1,2})\.?,?\s+(\d{4})/u);
   const n = m ? null : s.match(/^(\d{1,2})\.?\s+(\p{L}{3,})\.?,?\s+(\d{4})/u);
   const [month, day, year] = m ? [m[1], m[2], m[3]] : n ? [n[2], n[1], n[3]] : [];
   const mm = month && day ? monthOf(month) : 0;
-  return mm && day ? `${year}-${String(mm).padStart(2, "0")}-${day.padStart(2, "0")}` : "";
+  return mm && day && year ? iso(year, String(mm), day) : "";
+}
+
+/** Kehtiv kuupäev "aaaa-kk-pp" või "" (OCR-i "00.00.2017", "31.02.2026" ei ole kuupäev). */
+function iso(y: string, m: string, d: string): string {
+  const [Y, M, D] = [Number(y), Number(m), Number(d)];
+  const t = new Date(Date.UTC(Y, M - 1, D));
+  if (Y < 1990 || Y > 2100 || t.getUTCMonth() !== M - 1 || t.getUTCDate() !== D) return "";
+  return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
 }
 
 export function addDays(iso: string, days: number): string {
