@@ -308,3 +308,29 @@ Maksja KMKR nr: EE101019631`, "a.pdf");
   assert.deepEqual(inv.rows.map((r) => [r.description, r.quantity, r.net]), [["Raamatupidamisteenus 10/2026", 1, 220]]);
   assert.equal(totals(inv).gross, 272.8);
 });
+
+// inv24.com mall: KM-i pole (ainult ostja "KMKR:" silt), "Summa" = "Kokku", allahindlus eraldi real, summa sõnadega
+test("KM-ta arve: ostja KMKR-i silt pole KM, read koos allahindlusega, 'Arve nr 1', '00 SENTI' pole OÜ", () => {
+  const inv = parseInvoiceText(`Arve saaja:
+[Kliendi nimi]
+[Kliendi aadress]
+Reg. nr.: [Kliendi registrikood]
+KMKR: [Kliendi KMKR]
+Kuupäev: 27.06.2021
+Maksetähtaeg: 11.07.2021
+Arve nr 1
+Kirjeldus Kogus Hind Summa
+Näidistoode 1 1 200,00 200,00
+Näidistoode 1 (Soodustus(10%)) 1 -20,00 -20,00
+ÜKSSADA KAHEKSAKÜMMEND EUR JA 00 SENTI
+Summa: 180,00 €
+Kokku: 180,00 €
+[Firma nimi]
+Reg. nr.: [Registrikood]`, "0km_arve.pdf");
+  assert.equal(inv.number, "1");
+  assert.equal(inv.noVatOnDoc, true);
+  assert.deepEqual(inv.rows.map((r) => [r.description, r.quantity, r.unitPrice, r.vatRate]),
+    [["Näidistoode 1", 1, 200, 0], ["Näidistoode 1 (Soodustus(10%))", 1, -20, 0]]);
+  assert.equal(totals(inv).gross, 180);
+  assert.ok(!inv.candidates!.parties.some((p) => /SENTI|EUR JA/i.test(p.name)));
+});

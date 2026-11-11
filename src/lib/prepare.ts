@@ -21,6 +21,8 @@ export const bareName = (s: string) =>
  * viimasena vihjete järgi (pealkiri "Elisa arve", domeen elisa.ee) – kui dokumendil reg.koodi polegi.
  */
 function findKnown(parties: Party[], ibans: string[], hints: string[], known: KnownSupplier[]): KnownSupplier | undefined {
+  // varem võis registrikoodiks olla salvestatud KMKR – sellist ei kasuta
+  known = known.filter((k) => k.regNumber && k.regNumber !== k.vatNumber);
   const by = (f: (k: KnownSupplier) => boolean) => known.find(f);
   return (
     by((k) => parties.some((p) => p.regNumber && p.regNumber === k.regNumber)) ||
@@ -55,7 +57,7 @@ export function prepareForCompany(inv: Invoice, company: Company, known: KnownSu
       (!!p.name && !!bareName(company.name) && ` ${bareName(p.name)} `.includes(` ${bareName(company.name)} `));
     const others = parties.filter((p) => !isOwn(p));
     seller = {
-      ...(others.find((p) => p.regNumber) || others[0] || { name: "", regNumber: "" }),
+      ...(others.find((p) => isEstonianRegCode(p.regNumber)) || others.find((p) => p.regNumber) || others[0] || { name: "", regNumber: "" }),
       iban: ibans[0],
     };
     if (!seller.regNumber) {
@@ -63,10 +65,6 @@ export function prepareForCompany(inv: Invoice, company: Company, known: KnownSu
       if (k) {
         seller = { name: k.name, regNumber: k.regNumber, vatNumber: seller.vatNumber || k.vatNumber, iban: seller.iban || k.iban };
         warnings.push(`Tarnija "${k.name}" tunti ära varem saadetud arvete järgi – kontrolli`);
-      } else if (seller.vatNumber && !isEstonianVat(seller.vatNumber)) {
-        // Välismaa tarnija (nt Atlassian, EU372001951): eesti registrikoodi pole, Billberry nõuab sellerRegnumber'it
-        seller = { ...seller, regNumber: seller.vatNumber };
-        warnings.push(`Välismaa tarnija – registrikoodina saadetakse VAT-number ${seller.vatNumber}`);
       } else if (!seller.name && hints[0]) {
         // Ainult logo/pealkiri: nimi vihjest, reg.kood tuleb äriregistrist valida
         seller = { ...seller, name: hints[0][0].toUpperCase() + hints[0].slice(1) };

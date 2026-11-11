@@ -30,8 +30,9 @@ const DATE_LABEL = String.raw`(?:arve\s*kuup\S{1,2}ev|kuup\S{1,2}ev|kpv|invoice\
 const DUE_LABEL = String.raw`(?:makset\S{1,2}htaeg|t\S{1,2}htaeg|due\s*date|maksta\s*hiljemalt)`;
 // Sildi ja väärtuse vahel: "Kuupäev: x", OCR-i müra "kuupäevi x", "kuupäev! —x"
 const LABEL_END = String.raw`\p{L}?[^\p{L}\d]{0,4}`;
-// Käibemaksu mainimine. Paljas "KM" ei loe – see võib olla OCR-i müra
-const VAT_MENTION = /käibemaks|kmkr|\bkm-?\s*(?:nr|ga|ta|kohust|summa)|\bkm\s*[:(]?\s*\d|\d\s*%\s*km\b|(?:ilma|sh\.?|koos)\s+km\b|\bvat\b|\bEE\s?\d{9}\b/i;
+// Käibemaksu mainimine. Paljas "KM" ei loe – see võib olla OCR-i müra. KMKR loeb ainult numbriga: tühi mallisilt
+// ("KMKR: [Kliendi KMKR]") pole KM, aga KMKR-iga tšekil (KM-rida OCR-is kadunud) jääb 24%
+const VAT_MENTION = /käibemaks|\b(?:kmkr|km-?\s*nr)\b[^\d\n]{0,12}\d{9}|\bkm-?\s*(?:ga|ta|kohust|summa)|\bkm\s*[:(]?\s*\d|\d\s*%\s*km\b|(?:ilma|sh\.?|koos)\s+km\b|\bvat\b|\bEE\s?\d{9}\b/i;
 // OCR liidab veerud üheks reaks: "Firma OÜ Arve nr 123" -> nimi lõpeb enne kõrvalveeru silti
 const COLUMN_LABEL = /\s+(?:arve\s*(?:nr|number|no)|invoice\s*(?:nr|number|no)|kuup\S{1,2}ev|makset\S{1,2}htaeg|viitenumber|kliendinumber|periood|date)\b.*$/i;
 // Kaardi/sularahaga makstud tšekk: tähtaeg = kuupäev, e-arvel Payable=NO
@@ -178,6 +179,19 @@ function regNumbersOf(lines: string[], i: number): { regNumber: string; index: n
   return [];
 }
 
+/**
+ * Välismaa registrinumber sildi järgi (mitte VAT-number): "R.C.S. Luxembourg: B186284", "Company No. 12345678",
+ * "ABN 53 102 443 916", "HRB 86891", "KvK 34253435", "Org.nr 556703-7485", "Y-tunnus 1234567-8". Puudub -> "".
+ */
+function foreignRegOf(l: string): string {
+  const m = l.match(
+    /(?<![\p{L}\d])(?:R\.?\s?C\.?\s?S\.?(?:\s+\p{L}+)?|Company\s*(?:No|Number|Reg(?:istration)?\.?\s*No)|Registration\s*(?:No|Number)|ABN|ACN|CRN|HRB|HRA|KvK|Org\.?\s*nr|Y-tunnus|Business\s*ID)\.?\s*[:#]?\s*([A-Z]{0,3}\s?\d[\d\s\/-]{3,16}\d)(?![\d])/iu,
+  );
+  if (!m) return "";
+  const v = m[1].replace(/\s+/g, " ").trim();
+  return /^[A-Z]{2}\d{8,12}$/i.test(v.replace(/\s/g, "")) ? "" : v; // "EE101234567" jms on VAT
+}
+
 /** Kõik dokumendis nimetatud firmad (registrikoodiga ja ilma) dokumendi järjekorras. */
 function findParties(lines: string[]): Party[] {
   const out: (Party & { line: number })[] = [];
@@ -197,13 +211,15 @@ function findParties(lines: string[]): Party[] {
     if (l.length > 80 || !LEGAL_FORM.test(l) || NOT_NAME.test(l) || /^kasutaja:/i.test(l) || amountsOf(l, i).length || /\d{4,}/.test(l.replace(COLUMN_LABEL, ""))) return;
     const name = upToLegalForm(l.replace(PARTY_LABEL, "")) || l.replace(PARTY_LABEL, "").replace(COLUMN_LABEL, "").trim();
     if (out.some((p) => key(p.name).includes(key(name)) || key(name).includes(key(p.name) || "\0"))) return;
-    // KMKR samal real või aadressi all (kuni järgmise firma/sildini)
+    // KMKR ja välismaa registrinumber samal real või aadressi all (kuni järgmise firma/sildini)
     let vatNumber = vatOf(l);
-    for (let d = 1; d <= 5 && !vatNumber && i + d < lines.length; d++) {
+    let regNumber = foreignRegOf(l);
+    for (let d = 1; d <= 5 && i + d < lines.length; d++) {
       if (LEGAL_FORM.test(lines[i + d]) || PARTY_LABEL.test(lines[i + d])) break;
-      vatNumber = vatOf(lines[i + d]);
+      vatNumber ||= vatOf(lines[i + d]);
+      regNumber ||= foreignRegOf(lines[i + d]);
     }
-    out.push({ name: name.slice(0, 100), regNumber: "", vatNumber, line: i });
+    out.push({ name: name.slice(0, 100), regNumber, vatNumber, line: i });
   });
   return out.sort((a, b) => a.line - b.line).map(({ line: _, ...p }) => p);
 }
@@ -456,11 +472,12 @@ export function parseInvoiceText(text: string, filename: string): Invoice {
       return [...words, ...cells.filter((c) => !words.includes(c)).reverse()].join("\t");
     })
     .replace(/[  ]+/g, " ")
-    .replace(/(?<=\p{L}{2,} )(?:UU|00|0Ü|0U|ÜÜ|OÜ\.)(?= |$)/gmu, "OÜ");
+    // summa sõnadega ("… EUR JA 00 SENTI") pole firma
+    .replace(/(?<=\p{L}{2,} )(?:UU|00|0Ü|0U|ÜÜ|OÜ\.)(?= |$)(?! ?(?:senti|cents?)\b)/gimu, "OÜ");
   const lines = t.split("\n").map((l) => l.trim()).filter(Boolean);
 
   inv.number =
-    find(t, /(?:[aä]r?ve|invoice)\s*(?:nr|number|no)\.?[\s:#=—–-]*([A-Z0-9][A-Z0-9\-\/]*\d[A-Z0-9\-\/]*)/i) ||
+    find(t, /(?:[aä]r?ve|invoice)\s*(?:nr|number|no)\.?[\s:#=—–-]*((?=[A-Z0-9\-\/]*\d)[A-Z0-9][A-Z0-9\-\/]*)/i) || // ka "Arve nr 1"
     find(t, /^\s*(?:arve|invoice)\s+([A-Z0-9\-\/]*\d[A-Z0-9\-\/]*)\s*$/im) ||
     // tšekk: "Arve: 0532206", "Kviitung Nr: 3319"
     find(t, /^\s*(?:arve|kviitung|tšekk|tsekk)\s*(?:nr\.?)?\s*:\s*([A-Z0-9][A-Z0-9\-\/]*\d[A-Z0-9\-\/]*)/im);
@@ -495,7 +512,9 @@ export function parseInvoiceText(text: string, filename: string): Invoice {
   const ibans = [...new Set([...t.matchAll(/\b(EE\d{2}(?:\s?\d{4}){4})\b/g)].map((m) => m[1].replace(/\s/g, "")))];
   inv.candidates = { parties, ibans };
   inv.hints = findHints(lines, t);
-  const withReg = parties.filter((p) => p.regNumber);
+  // eesti registrikoodiga osapool enne välismaa registrinumbriga oma (AWS: Eesti filiaal, mitte Luxembourgi SARL)
+  const est = (p: Party) => /^\d{8}$/.test(p.regNumber);
+  const withReg = [...parties.filter(est), ...parties.filter((p) => p.regNumber && !est(p))];
   const seller = withReg[0] ?? parties[0];
   inv.seller = { ...(seller ?? inv.seller), iban: ibans[0] };
   inv.buyer = withReg[1] ?? parties.find((p) => p !== seller) ?? inv.buyer;

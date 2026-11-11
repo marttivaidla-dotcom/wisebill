@@ -6,7 +6,7 @@ import type { Company, Invoice, InvoiceRow, Party, SentEntry } from "@/lib/types
 import type { RegistryCompany, RegistryDetails } from "@/lib/ariregister";
 import { invoiceIssues, recalcRow, totals, validate } from "@/lib/vat";
 import { buildEInvoiceXml } from "@/lib/export/earve";
-import { bareName, isEstonianRegCode, prepareForCompany, rankSuggestions, registryVatWarning } from "@/lib/prepare";
+import { bareName, isEstonianRegCode, isEstonianVat, prepareForCompany, rankSuggestions, registryVatWarning } from "@/lib/prepare";
 import { billberryReady, companyIssues } from "@/lib/company";
 import { findDuplicate, toSentEntry, type DuplicateHit } from "@/lib/duplicates";
 import { store } from "@/lib/store";
@@ -124,9 +124,13 @@ export default function Home() {
         }
         const prepared = prepareForCompany(inv, company, store.suppliers());
         setInvoices((prev) => [...prev, prepared]);
-        if (!prepared.seller.regNumber)
+        // välismaa tarnija (VAT-number pole EE…) – eesti äriregistris teda pole (Briti "Company No." on samuti 8 numbrit)
+        const foreign = !!prepared.seller.vatNumber && !isEstonianVat(prepared.seller.vatNumber);
+        if (foreign) {
+          if (!prepared.seller.regNumber) update(prepared.id, (i) => ({ ...i, suggestions: [] }));
+        }
+        else if (!prepared.seller.regNumber)
           registrySuggestions(prepared).then((suggestions) => update(prepared.id, (i) => ({ ...i, suggestions })));
-        // välismaa tarnija (reg.koodiks VAT-number) – äriregistris teda pole
         else if (isEstonianRegCode(prepared.seller.regNumber))
           registryDetails(prepared.seller.regNumber).then((d) => {
             if (!d) return;
@@ -367,12 +371,7 @@ function InvoiceCard({ inv, company, duplicate, onChange, onRemove }: {
               {inv.suggestions === undefined ? "Otsin äriregistrist …"
                 : inv.suggestions.length ? "Vali äriregistrist õige firma – pärast saatmist jääb tarnija meelde:"
                 : "Äriregistrist vasteid ei leitud – sisesta registrikood käsitsi."}{" "}
-              Välismaa tarnijal sobib tema VAT- või registrinumber.
-              {!!inv.seller.vatNumber && (
-                <button className="link" onClick={() => setSeller("regNumber", inv.seller.vatNumber!)}>
-                  Kasuta VAT-numbrit {inv.seller.vatNumber}
-                </button>
-              )}
+              Välismaa tarnijal sisesta tema koduriigi registrinumber (mitte VAT-number) – pärast saatmist jääb see meelde.
               {!!inv.suggestions?.length && (
                 <div className="actions">
                   {inv.suggestions.map((s) => (

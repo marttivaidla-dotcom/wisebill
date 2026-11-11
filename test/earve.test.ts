@@ -99,27 +99,38 @@ test("KM-ta arve (0%): XML vastab XSD-le, KM summa 0, kokku = neto", async () =>
   assert.match(xml, /<Payable>YES<\/Payable><PayDueDate>2026-11-06<\/PayDueDate>/);
 });
 
-// Välismaa arve (pdf-parse tekst): tarnijal eesti reg.koodi pole, ainult VAT-number; USD; makstud PayPaliga; pöördmaksustamine
-test("välismaa tarnija ilma reg.koodita: VAT-number registrikoodiks, USD, makstud, XML vastab XSD-le", async () => {
+// Välismaa arve (pdf-parse tekst): tarnijal registrinumbrit arvel pole, ainult VAT-number; USD; makstud PayPaliga; pöördmaksustamine
+test("välismaa tarnija ilma registrinumbrita: VAT-number pole registrikood, kasutaja sisestab; USD, makstud, XSD", async () => {
   const elkis: Company = { id: "e", name: "Elkis Grupp OÜ", regNumber: "10964577", vatNumber: "EE101019631" };
   const text = readFileSync("test/fixtures/pdf-text/atlassian.txt", "utf8");
   const inv = prepareForCompany(parseInvoiceText(text, "Atlassian.pdf"), elkis);
   assert.equal(inv.number, "IN-EU-003-480-284");
   assert.equal(inv.date, "2026-09-07");
-  assert.deepEqual([inv.seller.name, inv.seller.regNumber, inv.seller.vatNumber], ["Atlassian Pty Ltd", "EU372001951", "EU372001951"]);
+  assert.deepEqual([inv.seller.name, inv.seller.regNumber, inv.seller.vatNumber], ["Atlassian Pty Ltd", "", "EU372001951"]);
   assert.equal(inv.buyer.regNumber, "10964577");
   assert.equal(inv.currency, "USD");
   assert.equal(inv.paid, true);
   assert.deepEqual(inv.rows.map((r) => [r.description, r.net, r.vatRate]), [["Jira, Standard, Monthly (USD, Fixed Starter, 15-10-2025) 8 users", 10, 0]]);
-  assert.deepEqual(validate(inv, elkis), []);
+  assert.match(validate(inv, elkis).join(), /Tarnija registrikood puudub/);
+  // KMKR/VAT-number registrikoodiks ei sobi
+  assert.match(validate({ ...inv, seller: { ...inv.seller, regNumber: "EU372001951" } }, elkis).join(), /ei saa olla KMKR/);
+  // varem (vigaselt) KMKR-iga meelde jäetud tarnijat ei kasutata
+  const stale = prepareForCompany(parseInvoiceText(text, "a.pdf"), elkis, [
+    { name: "Atlassian Pty Ltd", regNumber: "EU372001951", vatNumber: "EU372001951", hints: ["atlassian"] },
+  ]);
+  assert.equal(stale.seller.regNumber, "");
 
-  const xml = buildEInvoiceXml([inv], new Date("2026-09-08T10:00:00Z"));
+  // kasutaja sisestab koduriigi registrinumbri
+  const ok = { ...inv, seller: { ...inv.seller, regNumber: "53102443916" } };
+  assert.deepEqual(validate(ok, elkis), []);
+  const xml = buildEInvoiceXml([ok], new Date("2026-09-08T10:00:00Z"));
   const result = await validateXML({
     xml: [{ fileName: "arve.xml", contents: xml }],
     schema: [readFileSync("schema/e-invoice_ver1.2.EN.xsd", "utf8")],
   });
   assert.deepEqual(result.errors.map((e) => e.rawMessage), []);
-  assert.match(xml, /sellerRegnumber="EU372001951"/);
+  assert.match(xml, /sellerRegnumber="53102443916"/);
+  assert.match(xml, /<VATRegNumber>EU372001951<\/VATRegNumber>/);
   assert.match(xml, /<Currency>USD<\/Currency>/);
   assert.match(xml, /<Payable>NO<\/Payable>/);
 });
