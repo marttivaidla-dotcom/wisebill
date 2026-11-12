@@ -101,6 +101,15 @@ function findTotals(all: Amount[]): { net: number; vat: number; gross: number; r
   return best;
 }
 
+/**
+ * OCR loeb rea ees oleva ikooni lühikeseks prügiks: "2 Elektrienergia", "sw — Võrguteenus", "… elektriaktsiis §".
+ * Eemaldatakse 1–2-märgiline jupp suure algustähega sõna ees ja üksik sümbol lõpus.
+ */
+export const withoutIconNoise = (d: string) =>
+  d.replace(/^(?:[^\p{L}\p{N}\s]{1,2}|\d{1,2}|\p{Ll}{1,2})\s+(?:[—–-]\s+)?(?=\p{Lu}\p{Ll})/u, "")
+    .replace(/\s+[^\p{L}\p{N})\]%\s]{1,2}$/u, "")
+    .trim();
+
 /** Summa sildi järel samal real või (veergudes paigutuse korral) järgmistel ridadel. */
 function labeledAmount(lines: string[], label: RegExp): number {
   for (let i = 0; i < lines.length; i++) {
@@ -449,6 +458,7 @@ function findRows(lines: string[], totalNet: number, rate: number, mixed = false
       description = [...prev, description].join(" ").replace(/\s+/g, " ").trim();
     }
     description = description.replace(new RegExp(String.raw`(?:\s*\b(?:${CODES})\b)+$`), "").replace(/^\d{1,3}\.\s+(?=\S)/, "").trim();
+    description = withoutIconNoise(description);
     // Üldine sõna ("Charges") teenuse nime all, mille summa = rea neto + KM: "Amazon Simple Storage Service USD 48.79" / "Charges USD 39.35"
     if (/^(?:charges|tasud|teenustasu|net\s*charges)$/i.test(description) && c.line > 0) {
       const above = amountsOf(lines[c.line - 1], c.line - 1);
@@ -679,6 +689,7 @@ export function parseInvoiceText(text: string, filename: string): Invoice {
   if (found) {
     net = found.net;
     rate = found.rate;
+    inv.docTotals = { net: found.net, vat: found.vat, gross: found.gross };
   } else if (Number.isFinite(gross)) {
     if (vatFree || inv.noVatOnDoc) rate = 0;
     net = round2(gross / (1 + rate / 100));

@@ -34,6 +34,9 @@ müügiarved, Excel/CSV import, pangaväljavõtted, Books REST API, Billberry �
 - Kogusumma sildi tugevuse järgi (`grossByLabel`): tasumiseks/kokku tasuda > arve summa > kokku; "Kokku km-ta",
   "Käibemaks kokku" pole kogusumma. Ristkontroll: dokumendi "summa km-ta" ja "käibemaks" (suurim või vahesummade summa)
   peavad klappima arvutatuga, muidu hoiatus (vale rea KM-määr jääb nii silma).
+- Dokumendi kolmik neto + KM = kokku -> `inv.docTotals`; `totals()` kasutab dokumendi KM-i ja kogusummat **täpselt**
+  (tarnija ümardab KM-i teisiti, nt 10,07 × 24% = 2,42, arvel 2,41), kuni neto klapib ridadega ja KM vahe ≤ 0,05.
+  Vahe läheb suurima KM-grupi peale. Ikoonide OCR-prügi kirjelduses ("2 ", "sw — ", " §") -> `withoutIconNoise`.
 - Ostja märge `Party.buyer` ("Arve Klient OÜ-le", "Arve saaja:", "Klient:", "Ostja") – ostjat ei pakuta kunagi tarnijaks.
   Jaluse veergudest liidetud real nimi `nameInColumns`. Kehtetu kuupäev (OCR "00.00.2017") = "".
 - Summad ilma senditeta sobivad ainult valuutamärgiga ("3 000 €"). Kuupäev ka sõnadega ("oktoober 23, 2026", "23. oktoober 2026").

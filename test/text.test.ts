@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { parseDate } from "../src/lib/parsers/common";
 import { parseInvoiceText } from "../src/lib/parsers/text";
 import { prepareForCompany, rankSuggestions } from "../src/lib/prepare";
-import { totals } from "../src/lib/vat";
+import { round2, totals } from "../src/lib/vat";
 import type { Company } from "../src/lib/types";
 
 const company: Company = { id: "c1", name: "Mets ja Meri OÜ", regNumber: "11111111", vatNumber: "EE100000001" };
@@ -333,4 +333,41 @@ Reg. nr.: [Registrikood]`, "0km_arve.pdf");
     [["Näidistoode 1", 1, 200, 0], ["Näidistoode 1 (Soodustus(10%))", 1, -20, 0]]);
   assert.equal(totals(inv).gross, 180);
   assert.ok(!inv.candidates!.parties.some((p) => /SENTI|EUR JA/i.test(p.name)));
+});
+
+// Elektriarve: tarnija KM 2,41 (ümardamata kogustest), 10,07 × 24% annaks 2,42 – XML-i lähevad dokumendi numbrid
+const electricity = `Energiamüüja AS
+Reg. nr: 22222222
+KMKR: EE100000002
+Mets ja Meri OÜ
+Reg. nr: 11111111
+Arve nr 123456
+Arve kuupäev 05.11.2026
+Maksetähtaeg 19.11.2026
+Nimetus Maksumus
+2 Elektrienergia 2,56 €
+8 Tasakaalustamisvõimsuse kulu 0,04 €
+sw — Võrguteenus 7,28 €
+Taastuvenergia ja varustuskindluse tasu, elektriaktsiis § 0,19 €
+Summa käibemaksuta: 10,07 €
+Käibemaks 24%: 2,41 €
+Viivis: 0,00 €
+Arve summa: 12,48 €
+Kuulus tasumisele eelmise perioodi lõpul: 12,34 €
+Perioodi eest laekunud arve koostamise, 05.11.2026, hetkeks: 12,34 €
+Kuulub tasumisele 12,48 €`;
+
+test("dokumendi KM ja kogusumma täpselt dokumendilt, mitte ümber arvutatud", () => {
+  const inv = prepareForCompany(parseInvoiceText(electricity, "elekter.pdf"), company);
+  const t = totals(inv);
+  assert.deepEqual([t.net, t.vat, t.gross], [10.07, 2.41, 12.48]);
+  assert.deepEqual(t.byRate, [{ rate: 24, net: 10.07, vat: 2.41 }]);
+  // ikoonide OCR-prügi ("2 ", "sw — ", " §") pole kirjelduse osa
+  assert.deepEqual(inv.rows.map((r) => r.description), [
+    "Elektrienergia", "Tasakaalustamisvõimsuse kulu", "Võrguteenus", "Taastuvenergia ja varustuskindluse tasu, elektriaktsiis",
+  ]);
+  assert.deepEqual(inv.warnings.filter((w) => /klapi/.test(w)), []);
+  // kasutaja muudab rida -> neto ei klapi enam, summad arvutatakse
+  const edited = { ...inv, rows: inv.rows.map((r, i) => (i === 0 ? { ...r, net: 3.56 } : r)) };
+  assert.equal(totals(edited).gross, round2(11.07 * 1.24));
 });

@@ -24,8 +24,21 @@ export function totals(inv: Invoice): InvoiceTotals {
     });
   const net = round2(byRate.reduce((s, g) => s + g.net, 0));
   const vat = round2(byRate.reduce((s, g) => s + g.vat, 0));
+  // Dokumendi enda KM ja kogusumma täpselt nii, nagu tarnija need kirjutas (ilma ümardamise ja tuletamiseta),
+  // kui neto klapib sendi pealt ja KM erineb ainult ümardamise võrra (määra muutmine vms annab arvutatud summad)
+  const d = inv.docTotals;
+  if (d && byRate.length && Math.abs(d.net - net) < 0.005 && Math.abs(d.vat - vat) <= DOC_VAT_TOLERANCE + 1e-9
+    && Math.abs(round2(d.net + d.vat) - d.gross) < 0.005) {
+    // vahe läheb suurima KM-summaga määra grupile, et grupid annaksid kokku TotalVATSum-i
+    const g = byRate.reduce((a, b) => (Math.abs(b.vat) > Math.abs(a.vat) ? b : a));
+    g.vat = round2(g.vat + d.vat - vat);
+    return { net, vat: round2(d.vat), gross: round2(d.gross), byRate };
+  }
   return { net, vat, gross: round2(net + vat), byRate };
 }
+
+/** Kui palju võib dokumendi KM erineda arvutatust (ümardamine ridade kaupa / ümardamata kogustest). */
+const DOC_VAT_TOLERANCE = 0.05;
 
 export interface Issue {
   field: string; // "number" | "date" | "dueDate" | "seller.name" | "seller.regNumber" | "rows" | "row.0.description" ...

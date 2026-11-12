@@ -34,6 +34,9 @@ export interface Invoice {
   rows: InvoiceRow[];
   referenceNumber?: string; // viitenumber
   paid?: boolean; // juba makstud (kassatšekk kaardi/sularahaga) – e-arvel Payable=NO
+  // Dokumendi enda kogusummad (neto + KM = kokku). Tarnija võib KM-i ümardada teisiti (ridade kaupa,
+  // ümardamata kogustest) – XML-i lähevad dokumendi numbrid, kuni neto klapib ridadega (vat.ts totals)
+  docTotals?: { net: number; vat: number; gross: number };
   noVatOnDoc?: boolean; // dokumendil pole käibemaksu mainitud (KM 0% on järeldus, mitte dokumendilt loetud)
   source: string; // failinimi, millest arve tuli
   warnings: string[]; // parseri hoiatused, mida kasutaja peab eelvaates kontrollima
