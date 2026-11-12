@@ -1,5 +1,5 @@
 import type { Invoice } from "../types";
-import { totals } from "../vat";
+import { rowsForTotals, totals } from "../vat";
 
 /**
  * Eesti e-arve standard v1.2 (E_Invoice) XML – ostuarve Billberrysse (POST /invoices/received).
@@ -34,7 +34,8 @@ function party(tagName: string, p: Invoice["seller"]) {
 
 function invoiceXml(inv: Invoice): string {
   const t = totals(inv);
-  const items = inv.rows
+  // ridade KM annab kokku arve KM-i (dokumendi KM võib arvutatust sendi võrra erineda)
+  const items = rowsForTotals(inv, t)
     .map(
       (r, i) =>
         `<ItemEntry>` +

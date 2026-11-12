@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { parseDate } from "../src/lib/parsers/common";
 import { parseInvoiceText } from "../src/lib/parsers/text";
 import { prepareForCompany, rankSuggestions } from "../src/lib/prepare";
-import { round2, totals } from "../src/lib/vat";
+import { round2, rowsForTotals, totals } from "../src/lib/vat";
 import type { Company } from "../src/lib/types";
 
 const company: Company = { id: "c1", name: "Mets ja Meri OÜ", regNumber: "11111111", vatNumber: "EE100000001" };
@@ -370,4 +371,17 @@ test("dokumendi KM ja kogusumma täpselt dokumendilt, mitte ümber arvutatud", (
   // kasutaja muudab rida -> neto ei klapi enam, summad arvutatakse
   const edited = { ...inv, rows: inv.rows.map((r, i) => (i === 0 ? { ...r, net: 3.56 } : r)) };
   assert.equal(totals(edited).gross, round2(11.07 * 1.24));
+});
+
+test("OCR kaotas väikeses kirjas koma ('1007 €', '241 €', '1248 €'): kolmik taastub, XML-i 12,48 nagu arvel", () => {
+  const text = readFileSync("test/fixtures/ocr/elekter-ekraan.txt", "utf8");
+  const inv = parseInvoiceText(text, "elekter.png");
+  const t = totals(inv);
+  assert.deepEqual([t.net, t.vat, t.gross], [10.07, 2.41, 12.48]);
+  assert.equal(inv.rows.at(-1)!.description, "Taastuvenergia ja varustuskindluse tasu, elektriaktsiis");
+  // XML: kokkuvõte ja ridade KM-id annavad mõlemad 2,41 / 12,48
+  const rows = rowsForTotals(inv);
+  assert.equal(round2(rows.reduce((s, r) => s + r.vat, 0)), 2.41);
+  assert.equal(round2(rows.reduce((s, r) => s + r.gross, 0)), 12.48);
+  assert.deepEqual(inv.warnings.filter((w) => /klapi/.test(w)), []);
 });

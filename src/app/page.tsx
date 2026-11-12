@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { Company, Invoice, InvoiceRow, Party, SentEntry } from "@/lib/types";
 import type { RegistryCompany, RegistryDetails } from "@/lib/ariregister";
-import { invoiceIssues, recalcRow, totals, validate } from "@/lib/vat";
+import { invoiceIssues, recalcRow, rowsForTotals, totals, validate } from "@/lib/vat";
 import { buildEInvoiceXml } from "@/lib/export/earve";
 import { bareName, isEstonianRegCode, isEstonianVat, prepareForCompany, rankSuggestions, registryVatWarning } from "@/lib/prepare";
 import { billberryReady, companyIssues } from "@/lib/company";
@@ -324,6 +324,7 @@ function InvoiceCard({ inv, company, duplicate, onChange, onRemove }: {
   onChange: (fn: (i: Invoice) => Invoice) => void; onRemove: () => void;
 }) {
   const t = totals(inv);
+  const shown = rowsForTotals(inv, t); // ridade KM nagu XML-is (kokku = dokumendi KM)
   const issues = invoiceIssues(inv, company);
   const err = (field: string) => issues.find((i) => i.field === field)?.message;
   const bad = (field: string) => (issues.some((i) => i.field === field) ? "invalid" : "");
@@ -449,8 +450,8 @@ function InvoiceCard({ inv, company, duplicate, onChange, onRemove }: {
                   </select>
                 </td>
                 <td className="num">{r.net.toFixed(2)}</td>
-                <td className="num">{r.vat.toFixed(2)}</td>
-                <td className="num">{r.gross.toFixed(2)}</td>
+                <td className="num">{shown[i].vat.toFixed(2)}</td>
+                <td className="num">{shown[i].gross.toFixed(2)}</td>
                 <td><button className="link danger" title="Kustuta rida" onClick={() => onChange((x) => ({ ...x, rows: x.rows.filter((_, j) => j !== i) }))}>×</button></td>
               </tr>
             ))}

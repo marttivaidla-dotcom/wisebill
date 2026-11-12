@@ -37,6 +37,23 @@ export function totals(inv: Invoice): InvoiceTotals {
   return { net, vat, gross: round2(net + vat), byRate };
 }
 
+/**
+ * Read nii, et ridade KM määra kaupa annab kokku arve KM-i (dokumendi oma võib erineda sendi võrra):
+ * vahe läheb selle määra suurima KM-iga reale. Nii ei saa ridu liites teist kogusummat.
+ */
+export function rowsForTotals(inv: Invoice, t: InvoiceTotals = totals(inv)): InvoiceRow[] {
+  const rows = inv.rows.map((r) => ({ ...r }));
+  for (const g of t.byRate) {
+    const own = rows.filter((r) => r.vatRate === g.rate);
+    const diff = round2(g.vat - own.reduce((s, r) => s + r.vat, 0));
+    if (!diff || !own.length) continue;
+    const r = own.reduce((a, b) => (Math.abs(b.vat) > Math.abs(a.vat) ? b : a));
+    r.vat = round2(r.vat + diff);
+    r.gross = round2(r.net + r.vat);
+  }
+  return rows;
+}
+
 /** Kui palju võib dokumendi KM erineda arvutatust (ümardamine ridade kaupa / ümardamata kogustest). */
 const DOC_VAT_TOLERANCE = 0.05;
 

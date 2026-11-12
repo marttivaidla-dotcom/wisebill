@@ -84,6 +84,34 @@ function amountsOf(line: string, lineNo: number): Amount[] {
   return found.map((a, i) => ({ ...a, ...splitQuantity(a.text, a.index, found.slice(i + 1).map((x) => x.value)) }));
 }
 
+/**
+ * OCR kaotab väikeses kirjas koma: "Summa käibemaksuta 1007 €", "Käibemaks 24%: 241 €", "Arve summa 1248 €".
+ * Täisarv valuutamärgiga loetakse sentideks ainult siis, kui dokument seda kinnitab: sama summa on mujal komaga
+ * ("Kuulub tasumisele 12,48 €") või sellised summad moodustavad KM-määraga kolmiku neto + KM = kokku.
+ */
+function withLostCommas(lines: string[]): string[] {
+  // tuhandete eraldaja ("3 000 €") pole kadunud koma
+  const LOST = /(?<![\d.,\-])(?<!\d[  ])(\d{3,})(?=\s?(?:€|EUR\b))/g;
+  const lost = new Set(lines.flatMap((l) => [...l.matchAll(LOST)].map((m) => Number(m[1]))));
+  if (!lost.size) return lines;
+  const decimals = new Set(
+    lines.flatMap((l) => [...l.matchAll(AMOUNT_RE)].filter((m) => /[.,]\d{2}$/.test(m[0])).map((m) => Math.round(parseNumber(m[0]) * 100))),
+  );
+  if (!decimals.size) return lines; // dokumendis pole sentidega summasid – täisarvud on päris täisarvud
+  const cents = [...lost];
+  const fix = new Set(cents.filter((c) => decimals.has(c)));
+  for (const net of cents)
+    for (const vat of cents)
+      if (net !== vat && (lost.has(net + vat) || decimals.has(net + vat)) && rateOf(net / 100, vat / 100) !== undefined) {
+        fix.add(net).add(vat);
+        if (lost.has(net + vat)) fix.add(net + vat);
+      }
+  if (!fix.size) return lines;
+  return lines.map((l) =>
+    l.replace(LOST, (s) => (fix.has(Number(s)) ? `${s.slice(0, -2)},${s.slice(-2)}` : s)),
+  );
+}
+
 /** Arve kogusummad: suurim kolmik neto + KM = kokku, kus KM vastab mõnele KM-määrale. */
 function findTotals(all: Amount[]): { net: number; vat: number; gross: number; rate: number } | null {
   const values = [...new Set(all.map((a) => a.value).filter((v) => v !== 0))];
@@ -107,7 +135,7 @@ function findTotals(all: Amount[]): { net: number; vat: number; gross: number; r
  */
 export const withoutIconNoise = (d: string) =>
   d.replace(/^(?:[^\p{L}\p{N}\s]{1,2}|\d{1,2}|\p{Ll}{1,2})\s+(?:[—–-]\s+)?(?=\p{Lu}\p{Ll})/u, "")
-    .replace(/\s+[^\p{L}\p{N})\]%\s]{1,2}$/u, "")
+    .replace(/(?:\s+[^\p{L}\p{N})\]%\s]{1,2})+$/u, "")
     .trim();
 
 /** Summa sildi järel samal real või (veergudes paigutuse korral) järgmistel ridadel. */
@@ -455,7 +483,11 @@ function findRows(lines: string[], totalNet: number, rate: number, mixed = false
         if (used.has(j) || amountsOf(lines[j], j).length || isHeader(lines[j])) break;
         prev.unshift(lines[j]);
       }
-      description = [...prev, description].join(" ").replace(/\s+/g, " ").trim();
+      description = withoutIconNoise([...prev, description].join(" ").replace(/\s+/g, " ").trim());
+      // kirjeldus jätkub summa järel ("Taastuvenergia … tasu," / "§ 0,19 €" / "elektriaktsiis")
+      const next = lines[c.line + 1];
+      if (prev.length && description.endsWith(",") && next && !used.has(c.line + 1) && /^\p{Ll}[\p{L} ,-]*$/u.test(next) && !amountsOf(next, c.line + 1).length)
+        description = `${description} ${next}`;
     }
     description = description.replace(new RegExp(String.raw`(?:\s*\b(?:${CODES})\b)+$`), "").replace(/^\d{1,3}\.\s+(?=\S)/, "").trim();
     description = withoutIconNoise(description);
@@ -670,7 +702,7 @@ export function parseInvoiceText(text: string, filename: string): Invoice {
   inv.buyer = withReg[1] ?? parties.find((p) => p !== seller) ?? inv.buyer;
 
   // Summad (ainult arve valuutas; teise valuuta summad, nt KM eurodes USD-arvel, välja)
-  const money = lines.map((l) => withoutOtherCurrency(l, inv.currency));
+  const money = withLostCommas(lines.map((l) => withoutOtherCurrency(l, inv.currency)));
   const all = money.flatMap(amountsOf);
   const found = findTotals(all);
   const vatFree = /käibemaksuvaba|maksuvaba|(?:käibemaks|km|vat)\D{0,15}?(?<!\d)0(?:[.,]0+)?\s*%|reverse\s*charge|pöördmaksustamine/i.test(t);
