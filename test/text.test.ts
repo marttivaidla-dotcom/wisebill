@@ -385,3 +385,22 @@ test("OCR kaotas väikeses kirjas koma ('1007 €', '241 €', '1248 €'): kolm
   assert.equal(round2(rows.reduce((s, r) => s + r.gross, 0)), 12.48);
   assert.deepEqual(inv.warnings.filter((w) => /klapi/.test(w)), []);
 });
+
+// Kindlustusarve: "Maksja" = ostja, "Saaja" = makse saaja = tarnija (mitte "Arve saaja")
+const insurance = `Arve nr 9988776
+Arve kuupäev 10.11.2026
+Maksja
+Mets ja Meri OÜ
+Reg. kood 11111111
+Saaja
+AS LHV KINDLUSTUS
+Tartu Mnt 2, 10145 Tallinn
+Reg. kood 14973611
+Kindlustusmakse 25,00 €
+Tasumisele kuulub 25,00 €`;
+
+test("'Saaja' on makse saaja = tarnija, 'Maksja' on ostja", () => {
+  const inv = prepareForCompany(parseInvoiceText(insurance, "lhv.png"), company);
+  assert.equal(inv.seller.regNumber, "14973611");
+  assert.equal(inv.buyer.regNumber, "11111111");
+});

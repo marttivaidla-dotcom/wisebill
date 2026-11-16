@@ -40,7 +40,7 @@ müügiarved, Excel/CSV import, pangaväljavõtted, Books REST API, Billberry �
   Ikoonide OCR-prügi kirjelduses ("2 ", "sw — ", " §") -> `withoutIconNoise`.
 - OCR kaotab väikeses kirjas koma ("1007 €", "241 €", "1248 €") -> `withLostCommas` taastab ainult siis, kui dokument kinnitab
   (sama summa mujal komaga või kolmik neto + KM = kokku). Fixture: `test/fixtures/ocr/elekter-ekraan.txt`.
-- Ostja märge `Party.buyer` ("Arve Klient OÜ-le", "Arve saaja:", "Klient:", "Ostja") – ostjat ei pakuta kunagi tarnijaks.
+- Ostja märge `Party.buyer` ("Arve Klient OÜ-le", "Arve saaja:", "Klient:", "Ostja", "Maksja"; paljas "Saaja" = makse saaja = tarnija) – ostjat ei pakuta kunagi tarnijaks.
   Jaluse veergudest liidetud real nimi `nameInColumns`. Kehtetu kuupäev (OCR "00.00.2017") = "".
 - Summad ilma senditeta sobivad ainult valuutamärgiga ("3 000 €"). Kuupäev ka sõnadega ("oktoober 23, 2026", "23. oktoober 2026").
   Tähtaja puudumisel kuupäev + 14 päeva.

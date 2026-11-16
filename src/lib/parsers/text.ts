@@ -334,8 +334,9 @@ function findParties(lines: string[]): Party[] {
   return out.sort((a, b) => a.line - b.line).map(({ line: _, ...p }) => p);
 }
 
-// Ostja sildid: "Arve saaja:", "Klient:", "Ostja", "Maksja", "Bill to"
-const BUYER_LABEL = /^(?:arve\s*saaja|saaja|klient|ostja|maksja(?:\s*nimi)?|tellija|bill\s*to|billed\s*to|customer|buyer|invoice\s*to)\b\s*:?\s*/i;
+// Ostja sildid: "Arve saaja:", "Klient:", "Ostja", "Maksja", "Bill to".
+// Paljas "Saaja" (paaris "Maksja"-ga) on makse saaja = tarnija, mitte ostja.
+const BUYER_LABEL = /^(?:arve\s*saaja|klient|ostja|maksja(?:\s*nimi)?|tellija|bill\s*to|billed\s*to|customer|buyer|invoice\s*to)\b\s*:?\s*/i;
 
 /**
  * Märgib ostja: nimi lauses "Arve Klient OÜ-le …" / "… OÜ-le toodete eest" või ostja sildi järel (samal või järgmisel real).
